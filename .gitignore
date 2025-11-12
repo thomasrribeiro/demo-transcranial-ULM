@@ -1,0 +1,9 @@
+# Ignore all .mat files (large data files)
+*.mat
+
+# macOS
+.DS_Store
+
+# MATLAB
+*.asv
+*.m~
