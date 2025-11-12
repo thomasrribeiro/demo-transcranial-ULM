@@ -19,7 +19,7 @@ clear; clc; close all;
 %% ========== USER PARAMETERS ==========
 % Target frame rate for downsampled comparison (Hz)
 % Must be < 800 Hz. Recommended values: 20, 50, 100, 200
-target_framerate = 50; % Hz
+target_framerate = 25; % Hz
 
 % High-pass filter cutoff frequency (Hz)
 % Automatically computed as 80% of Nyquist frequency for fair comparison
@@ -48,10 +48,10 @@ num_frames_800Hz = size(IQ_800Hz, 3);
 
 % Apply high-pass filtering to reveal bubbles
 % SVD filtering commented out - using temporal high-pass filter instead
-% sv_cutoff_800Hz = 30;
+% sv_cutoff_800Hz = 100;
 % fprintf('Applying SVD filtering to 800 Hz data (%d frames, removing %d singular values = %.1f%% of frames)...\n', ...
 %     num_frames_800Hz, sv_cutoff_800Hz, 100*sv_cutoff_800Hz/num_frames_800Hz);
-% IQF_800Hz = filterSVD(IQ_800Hz, 1);
+% IQF_800Hz = filterSVD(IQ_800Hz, sv_cutoff_800Hz);
 
 fprintf('Applying high-pass filter to 800 Hz data (%d frames, cutoff = %d Hz)...\n', ...
     num_frames_800Hz, cutoff_freq);
@@ -81,7 +81,7 @@ num_frames_low = size(IQ_low, 3);
 % sv_cutoff_low = round(sv_cutoff_800Hz * num_frames_low / num_frames_800Hz);
 % fprintf('Applying SVD filtering to low framerate data (%d frames, removing %d singular values = %.1f%% of frames)...\n', ...
 %     num_frames_low, sv_cutoff_low, 100*sv_cutoff_low/num_frames_low);
-% IQF_low = filterSVD(IQ_low, 1);
+% IQF_low = filterSVD(IQ_low, sv_cutoff_low);
 
 fprintf('Applying high-pass filter to %.1f Hz data (%d frames, cutoff = %d Hz)...\n', ...
     framerate_low, num_frames_low, cutoff_freq);
@@ -109,7 +109,10 @@ if ~isempty(Bubbles_800Hz_array)
     fprintf('  Mean track length: %.1f frames\n', mean(Bubbles_800Hz_array(:,5)));
     fprintf('  Tracks > 5 frames: %.1f%%\n', ...
         100 * sum(Bubbles_800Hz_array(:,5) > 5) / size(Bubbles_800Hz_array, 1));
+else
+    warning('No bubbles detected at 800 Hz! Check filtering parameters.');
 end
+
 fprintf('%.1f Hz bubbles: %d total\n', framerate_low, size(Bubbles_low_array, 1));
 if ~isempty(Bubbles_low_array)
     fprintf('  Frame range: %.0f to %.0f\n', ...
@@ -117,9 +120,18 @@ if ~isempty(Bubbles_low_array)
     fprintf('  Mean track length: %.1f frames\n', mean(Bubbles_low_array(:,5)));
     fprintf('  Tracks > 5 frames: %.1f%%\n', ...
         100 * sum(Bubbles_low_array(:,5) > 5) / size(Bubbles_low_array, 1));
+else
+    warning('No bubbles detected at %.1f Hz! This may be due to:', framerate_low);
+    fprintf('  - High-pass filter cutoff (%.1f Hz) may be too low (Nyquist = %.1f Hz)\n', ...
+        cutoff_freq, framerate_low/2);
+    fprintf('  - Insufficient temporal filtering with only %d frames\n', num_frames_low);
+    fprintf('  - Consider increasing target_framerate or using more data\n');
 end
-fprintf('Detection ratio: %.1fHz detected %.1f%% of bubbles compared to 800Hz\n', ...
-    framerate_low, 100 * size(Bubbles_low_array, 1) / max(1, size(Bubbles_800Hz_array, 1)));
+
+if ~isempty(Bubbles_800Hz_array)
+    fprintf('Detection ratio: %.1fHz detected %.1f%% of bubbles compared to 800Hz\n', ...
+        framerate_low, 100 * size(Bubbles_low_array, 1) / max(1, size(Bubbles_800Hz_array, 1)));
+end
 
 %% 5. Calculate metrics for both frame rates
 fprintf('\n=== Calculating Tracking Metrics ===\n');
@@ -145,7 +157,8 @@ pixel_size = 0.1*[1 1];
 fprintf('Generating 800 Hz density map...\n');
 % Filter by track length for better quality
 kept_indices_800Hz = Bubbles_800Hz_array(:, 5) > min_size_track;
-fprintf('  Using %d bubbles (track length > %d)\n', sum(kept_indices_800Hz), min_size_track);
+num_bubbles_800Hz = sum(kept_indices_800Hz);
+fprintf('  Using %d bubbles (track length > %d)\n', num_bubbles_800Hz, min_size_track);
 density_map_800Hz = displayImageFromPositions(...
     Bubbles_800Hz_array(kept_indices_800Hz, 2), ...  % Z positions
     Bubbles_800Hz_array(kept_indices_800Hz, 1), ...  % X positions
@@ -159,7 +172,8 @@ fprintf('Generating 800 Hz downsampled density map (every %d bubbles)...\n', dow
 kept_indices_800Hz_all = find(Bubbles_800Hz_array(:, 5) > min_size_track);
 % Downsample the kept bubbles to match low framerate observation count
 downsampled_indices_800Hz = kept_indices_800Hz_all(1:downsample_factor:end);
-fprintf('  Using %d bubbles (downsampled from %d)\n', length(downsampled_indices_800Hz), length(kept_indices_800Hz_all));
+num_bubbles_800Hz_downsampled = length(downsampled_indices_800Hz);
+fprintf('  Using %d bubbles (downsampled from %d)\n', num_bubbles_800Hz_downsampled, length(kept_indices_800Hz_all));
 density_map_800Hz_downsampled = displayImageFromPositions(...
     Bubbles_800Hz_array(downsampled_indices_800Hz, 2), ...  % Z positions
     Bubbles_800Hz_array(downsampled_indices_800Hz, 1), ...  % X positions
@@ -169,14 +183,28 @@ fprintf('  Non-zero pixels: %d\n', sum(density_map_800Hz_downsampled(:) > 0));
 
 % Low framerate density map
 fprintf('Generating %.1f Hz density map...\n', framerate_low);
-kept_indices_low = Bubbles_low_array(:, 5) > min_size_track;
-fprintf('  Using %d bubbles (track length > %d)\n', sum(kept_indices_low), min_size_track);
-density_map_low = displayImageFromPositions(...
-    Bubbles_low_array(kept_indices_low, 2), ...  % Z positions
-    Bubbles_low_array(kept_indices_low, 1), ...  % X positions
-    ZX_boundaries, grid_size, pixel_size);
-fprintf('  Density map range: [%.6f, %.6f]\n', min(density_map_low(:)), max(density_map_low(:)));
-fprintf('  Non-zero pixels: %d\n', sum(density_map_low(:) > 0));
+if ~isempty(Bubbles_low_array)
+    kept_indices_low = Bubbles_low_array(:, 5) > min_size_track;
+    num_bubbles_low = sum(kept_indices_low);
+    fprintf('  Using %d bubbles (track length > %d)\n', num_bubbles_low, min_size_track);
+
+    if num_bubbles_low > 0
+        density_map_low = displayImageFromPositions(...
+            Bubbles_low_array(kept_indices_low, 2), ...  % Z positions
+            Bubbles_low_array(kept_indices_low, 1), ...  % X positions
+            ZX_boundaries, grid_size, pixel_size);
+        fprintf('  Density map range: [%.6f, %.6f]\n', min(density_map_low(:)), max(density_map_low(:)));
+        fprintf('  Non-zero pixels: %d\n', sum(density_map_low(:) > 0));
+    else
+        warning('No bubbles with track length > %d frames. Creating empty density map.', min_size_track);
+        density_map_low = zeros(grid_size);
+        num_bubbles_low = 0;
+    end
+else
+    warning('No bubbles detected at %.1f Hz. Creating empty density map.', framerate_low);
+    density_map_low = zeros(grid_size);
+    num_bubbles_low = 0;
+end
 
 %% 7. Calculate image quality metrics
 fprintf('\n=== Calculating Image Quality Metrics ===\n');
@@ -287,14 +315,157 @@ if ~isnan(ssim_value)
     fprintf('\nStructural similarity (SSIM): %.3f\n', ssim_value);
 end
 
-%% 9. Create visualizations
+%% 9. Generate Power Doppler Images
+fprintf('\n=== Generating Power Doppler Images ===\n');
+
+% Select a representative frame for visualization
+frame_idx = round(num_frames_800Hz / 2); % Middle frame
+frame_idx_low = ceil(frame_idx / downsample_factor);
+
+fprintf('Visualizing frame %d (800 Hz) and frame %d (%.1f Hz)\n', ...
+    frame_idx, frame_idx_low, framerate_low);
+
+% Create Power Doppler figure
+fig_power_doppler = figure('Name', 'Power Doppler Comparison', 'Position', [100 100 1600 600]);
+
+% 800 Hz Power Doppler
+subplot(1, 2, 1);
+% Convert to power (magnitude squared) and to dB
+power_doppler_800 = abs(IQF_800Hz(:,:,frame_idx)).^2;
+power_doppler_800_dB = 10*log10(power_doppler_800 / max(power_doppler_800(:)));
+
+% Scan conversion to Cartesian coordinates
+[power_800_scan, SpaceInfo] = scanConversion(power_doppler_800_dB, ...
+    BFStruct.R_extent, BFStruct.Phi_extent, 512);
+
+imagesc(SpaceInfo.extentX, fliplr(-SpaceInfo.extentY), power_800_scan);
+colormap(gca, hot(256));
+caxis([-40 0]); % 40 dB dynamic range
+colorbar;
+axis equal; axis tight;
+title(sprintf('800 Hz Power Doppler\nFrame %d', frame_idx), 'FontSize', 14, 'FontWeight', 'bold');
+xlabel('X [mm]'); ylabel('Depth [mm]');
+
+% Low framerate Power Doppler
+subplot(1, 2, 2);
+% Convert to power (magnitude squared) and to dB
+power_doppler_low = abs(IQF_low(:,:,frame_idx_low)).^2;
+power_doppler_low_dB = 10*log10(power_doppler_low / max(power_doppler_low(:)));
+
+% Scan conversion to Cartesian coordinates
+[power_low_scan, ~] = scanConversion(power_doppler_low_dB, ...
+    BFStruct.R_extent, BFStruct.Phi_extent, 512);
+
+imagesc(SpaceInfo.extentX, fliplr(-SpaceInfo.extentY), power_low_scan);
+colormap(gca, hot(256));
+caxis([-40 0]); % 40 dB dynamic range
+colorbar;
+axis equal; axis tight;
+title(sprintf('%.1f Hz Power Doppler\nFrame %d', framerate_low, frame_idx_low), ...
+    'FontSize', 14, 'FontWeight', 'bold');
+xlabel('X [mm]'); ylabel('Depth [mm]');
+
+sgtitle({'Power Doppler Comparison (High-Pass Filtered)', ...
+         sprintf('40 dB dynamic range | Cutoff: %d Hz', cutoff_freq)}, ...
+         'FontSize', 16, 'FontWeight', 'bold');
+
+%% 10. Create visualizations
 fprintf('\n=== Creating Visualizations ===\n');
-fig_handles = visualize_comparison(density_map_800Hz, density_map_low, ...
-    metrics_800Hz, metrics_low, ...
-    IQ_800Hz, IQ_low, ...
-    IQF_800Hz, IQF_low, ...
-    Bubbles_800Hz_array, Bubbles_low_array, ...
-    ZX_boundaries, BFStruct, density_map_800Hz_downsampled);
+
+% Diagnostic information
+fprintf('Density map diagnostics:\n');
+fprintf('  800 Hz: max=%.6f, nonzero pixels=%d, size=[%d x %d]\n', ...
+    max(density_map_800Hz(:)), sum(density_map_800Hz(:) > 0), size(density_map_800Hz,1), size(density_map_800Hz,2));
+fprintf('  800 Hz DS: max=%.6f, nonzero pixels=%d\n', ...
+    max(density_map_800Hz_downsampled(:)), sum(density_map_800Hz_downsampled(:) > 0));
+fprintf('  %.1f Hz: max=%.6f, nonzero pixels=%d\n', ...
+    framerate_low, max(density_map_low(:)), sum(density_map_low(:) > 0));
+
+% Create structure with bubble counts for visualization
+bubble_counts = struct();
+bubble_counts.num_800Hz = num_bubbles_800Hz;
+bubble_counts.num_800Hz_downsampled = num_bubbles_800Hz_downsampled;
+bubble_counts.num_low = num_bubbles_low;
+
+% Only create density map comparison (Figure 1 from visualize_comparison)
+try
+    % Calculate downsample factor
+    downsample_factor_vis = round(size(IQ_800Hz, 3) / size(IQ_low, 3));
+    low_framerate_vis = round(800 / downsample_factor_vis);
+
+    % Create density map comparison figure
+    fig_density = figure('Name', 'Density Map Comparison', 'Position', [100 100 1800 800]);
+
+    % 800 Hz density map (all data)
+    subplot(2, 2, 1);
+    imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), density_map_800Hz.^0.45);
+    colormap(gca, hot(256));
+    axis tight; axis equal;
+    caxis([0 0.95]);
+    title(sprintf('800 Hz - All Data\n(%d bubbles)', bubble_counts.num_800Hz), 'FontSize', 14, 'FontWeight', 'bold');
+    xlabel('X [mm]'); ylabel('Depth [mm]');
+    colorbar;
+
+    % 800 Hz downsampled
+    subplot(2, 2, 2);
+    imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), density_map_800Hz_downsampled.^0.45);
+    colormap(gca, hot(256));
+    axis tight; axis equal;
+    caxis([0 0.95]);
+    title(sprintf('800 Hz - Downsampled (1/%d obs)\n(%d bubbles)', downsample_factor_vis, bubble_counts.num_800Hz_downsampled), ...
+        'FontSize', 14, 'FontWeight', 'bold');
+    xlabel('X [mm]'); ylabel('Depth [mm]');
+    colorbar;
+    text(0.5, 0.98, 'Shows effect of fewer observations', ...
+        'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+        'VerticalAlignment', 'top', 'Color', 'yellow', 'FontSize', 10, 'FontWeight', 'bold');
+
+    % Low framerate actual
+    subplot(2, 2, 3);
+    imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), density_map_low.^0.45);
+    colormap(gca, hot(256));
+    axis tight; axis equal;
+    caxis([0 0.95]);
+    title(sprintf('%d Hz - Actual\n(%d bubbles)', low_framerate_vis, bubble_counts.num_low), 'FontSize', 14, 'FontWeight', 'bold');
+    xlabel('X [mm]'); ylabel('Depth [mm]');
+    colorbar;
+    text(0.5, 0.98, 'Shows combined effect of sampling + detection', ...
+        'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+        'VerticalAlignment', 'top', 'Color', 'yellow', 'FontSize', 10, 'FontWeight', 'bold');
+
+    % Difference map
+    subplot(2, 2, 4);
+    diff_map = density_map_800Hz_downsampled - density_map_low;
+    imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), diff_map);
+
+    % Create blue-white-red colormap (coolwarm alternative)
+    n = 256;
+    r = [linspace(0, 1, n/2), ones(1, n/2)];
+    g = [linspace(0, 1, n/2), linspace(1, 0, n/2)];
+    b = [ones(1, n/2), linspace(1, 0, n/2)];
+    colormap(gca, [r', g', b']);
+
+    axis tight; axis equal;
+    max_diff = max(abs(diff_map(:)));
+    if max_diff > 0
+        caxis([-max_diff, max_diff]);
+    else
+        caxis([-1, 1]);
+    end
+    title(sprintf('Difference (800Hz DS - %dHz)', low_framerate_vis), 'FontSize', 14, 'FontWeight', 'bold');
+    xlabel('X [mm]'); ylabel('Depth [mm]');
+    colorbar;
+    text(0.5, 0.98, 'Isolates temporal sampling effect', ...
+        'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+        'VerticalAlignment', 'top', 'Color', 'yellow', 'FontSize', 10, 'FontWeight', 'bold');
+
+    sgtitle({'Density Map Comparison: Isolating Effects of Frame Rate', ...
+             'Top row: 800 Hz (all data vs downsampled) | Bottom row: Low framerate actual vs difference'}, ...
+             'FontSize', 16, 'FontWeight', 'bold');
+
+    drawnow;
+    fprintf('Successfully created density map comparison figure\n');
+end
 
 % Save figures as PNG
 fprintf('\n=== Saving Figures ===\n');
@@ -303,17 +474,18 @@ if ~exist(figures_dir, 'dir')
     mkdir(figures_dir);
 end
 
-figure_names = {'density_map_comparison', 'raw_vs_filtered', ...
-                'tracking_trajectories', 'quantitative_metrics'};
+% Save Power Doppler figure
+if exist('fig_power_doppler', 'var') && ishghandle(fig_power_doppler)
+    filename = fullfile(figures_dir, 'power_doppler_comparison.png');
+    saveas(fig_power_doppler, filename);
+    fprintf('  Saved: power_doppler_comparison.png\n');
+end
 
-for i = 1:length(fig_handles)
-    if ishghandle(fig_handles(i))
-        filename = fullfile(figures_dir, sprintf('%s.png', figure_names{i}));
-        saveas(fig_handles(i), filename);
-        fprintf('  Saved: %s.png\n', figure_names{i});
-    else
-        warning('Figure %d handle is invalid, cannot save %s', i, figure_names{i});
-    end
+% Save Density Map figure
+if exist('fig_density', 'var') && ishghandle(fig_density)
+    filename = fullfile(figures_dir, 'density_map_comparison.png');
+    saveas(fig_density, filename);
+    fprintf('  Saved: density_map_comparison.png\n');
 end
 
 fprintf('\n=================================================\n');

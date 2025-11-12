@@ -3,7 +3,7 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
     IQ_800Hz, IQ_low, ...
     IQF_800Hz, IQF_low, ...
     Bubbles_800Hz, Bubbles_low, ...
-    ZX_boundaries, BFStruct, density_800Hz_downsampled)
+    ZX_boundaries, BFStruct, density_800Hz_downsampled, bubble_counts)
 %VISUALIZE_COMPARISON Create comprehensive visualizations comparing frame rates
 %
 %   Creates multiple figures to visualize the impact of frame rate on:
@@ -24,6 +24,17 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
     fprintf('Visualization: 800 Hz (%d frames) vs %d Hz (%d frames), downsample factor = %d\n', ...
         size(IQ_800Hz, 3), low_framerate, size(IQ_low, 3), downsample_factor);
 
+    % Extract bubble counts (use defaults if not provided)
+    if nargin >= 11 && ~isempty(bubble_counts)
+        n_800 = bubble_counts.num_800Hz;
+        n_800_ds = bubble_counts.num_800Hz_downsampled;
+        n_low = bubble_counts.num_low;
+    else
+        n_800 = NaN;
+        n_800_ds = NaN;
+        n_low = NaN;
+    end
+
     %% Figure 1: Side-by-side density map comparison (4 panels)
     fig_handles(1) = figure('Name', 'Density Map Comparison', 'Position', [100 100 1800 800]);
 
@@ -33,7 +44,11 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
     colormap(gca, hot(256));
     axis tight; axis equal;
     caxis([0 0.95]);
-    title('800 Hz - All Data', 'FontSize', 14, 'FontWeight', 'bold');
+    if ~isnan(n_800)
+        title(sprintf('800 Hz - All Data\n(%d bubbles)', n_800), 'FontSize', 14, 'FontWeight', 'bold');
+    else
+        title('800 Hz - All Data', 'FontSize', 14, 'FontWeight', 'bold');
+    end
     xlabel('X [mm]'); ylabel('Depth [mm]');
     colorbar;
 
@@ -44,7 +59,13 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
         colormap(gca, hot(256));
         axis tight; axis equal;
         caxis([0 0.95]);
-        title(sprintf('800 Hz - Downsampled (1/%d observations)', downsample_factor), 'FontSize', 14, 'FontWeight', 'bold');
+        if ~isnan(n_800_ds)
+            title(sprintf('800 Hz - Downsampled (1/%d obs)\n(%d bubbles)', downsample_factor, n_800_ds), ...
+                'FontSize', 14, 'FontWeight', 'bold');
+        else
+            title(sprintf('800 Hz - Downsampled (1/%d observations)', downsample_factor), ...
+                'FontSize', 14, 'FontWeight', 'bold');
+        end
         xlabel('X [mm]'); ylabel('Depth [mm]');
         colorbar;
         text(0.5, 0.98, 'Shows effect of fewer observations', ...
@@ -61,7 +82,11 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
     colormap(gca, hot(256));
     axis tight; axis equal;
     caxis([0 0.95]);
-    title(sprintf('%d Hz - Actual', low_framerate), 'FontSize', 14, 'FontWeight', 'bold');
+    if ~isnan(n_low)
+        title(sprintf('%d Hz - Actual\n(%d bubbles)', low_framerate, n_low), 'FontSize', 14, 'FontWeight', 'bold');
+    else
+        title(sprintf('%d Hz - Actual', low_framerate), 'FontSize', 14, 'FontWeight', 'bold');
+    end
     xlabel('X [mm]'); ylabel('Depth [mm]');
     colorbar;
     text(0.5, 0.98, 'Shows combined effect of sampling + detection', ...
