@@ -46,7 +46,12 @@ function fig_handles = visualize_comparison(density_800Hz, density_100Hz, ...
     imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), diff_map);
     colormap(gca, coolwarm(256));
     axis tight; axis equal;
-    caxis([-max(abs(diff_map(:))), max(abs(diff_map(:)))]);
+    max_diff = max(abs(diff_map(:)));
+    if max_diff > 0
+        caxis([-max_diff, max_diff]);
+    else
+        caxis([-1, 1]);  % Default range if no difference
+    end
     title('Difference (800Hz - 100Hz)', 'FontSize', 14);
     xlabel('X [mm]'); ylabel('Depth [mm]');
     colorbar;

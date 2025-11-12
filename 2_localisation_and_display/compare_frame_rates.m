@@ -28,11 +28,9 @@ fprintf('=================================================\n\n');
 %% 1. Load original 800 Hz data
 fprintf('Loading original 800 Hz data...\n');
 load('Raw_ultrasonic_data_1s.mat');
-load('Bubbles_positions_and_speed_1s.mat');
 
 % Store original data
 IQ_800Hz = double(IQ);
-Bubbles_800Hz = Bubbles_positions_and_speed_table;
 framerate_800Hz = 800; % Hz
 
 % Apply SVD filtering to reveal bubbles
@@ -42,28 +40,51 @@ IQF_800Hz = filterSVD(IQ_800Hz, 30);
 %% 2. Create downsampled 100 Hz version
 fprintf('\nCreating 100 Hz downsampled version...\n');
 target_framerate = 100; % Hz
+downsample_factor = round(framerate_800Hz / target_framerate);
+framerate_100Hz = framerate_800Hz / downsample_factor;
 
-[IQ_100Hz, Bubbles_100Hz, framerate_100Hz] = downsample_data(...
-    IQ_800Hz, Bubbles_800Hz, framerate_800Hz, target_framerate);
+% Downsample IQ data - take every nth frame
+IQ_100Hz = IQ_800Hz(:, :, 1:downsample_factor:end);
 
 % Apply SVD filtering to downsampled data
 fprintf('Applying SVD filtering to 100 Hz data...\n');
 IQF_100Hz = filterSVD(IQ_100Hz, 30);
 
-%% 3. Convert bubble tables to arrays
-fprintf('\n=== Converting Data Structures ===\n');
-Bubbles_800Hz_array = table2array(Bubbles_800Hz);
-Bubbles_100Hz_array = table2array(Bubbles_100Hz);
+%% 3. Perform bubble detection and tracking using professional ULM
+fprintf('\n=== PERFORMING BUBBLE DETECTION AND TRACKING ===\n');
+fprintf('Using professional ULM detection with sub-pixel localization\n\n');
 
-% Debug: Check bubble data
-fprintf('800 Hz bubbles: %d total, frames %d to %d\n', ...
-    size(Bubbles_800Hz_array, 1), ...
-    min(Bubbles_800Hz_array(:,3)), max(Bubbles_800Hz_array(:,3)));
-fprintf('100 Hz bubbles: %d total, frames %d to %d\n', ...
-    size(Bubbles_100Hz_array, 1), ...
-    min(Bubbles_100Hz_array(:,3)), max(Bubbles_100Hz_array(:,3)));
+% Detect and track bubbles in 800 Hz data
+fprintf('800 Hz Bubble Detection and Tracking:\n');
+frame_offset = 7201;  % Frame numbering starts at 7202
+Bubbles_800Hz_array = detect_and_track_bubbles(IQF_800Hz, BFStruct, frame_offset);
 
-%% 4. Calculate metrics for both frame rates
+% Detect and track bubbles in 100 Hz data
+fprintf('\n100 Hz Bubble Detection and Tracking:\n');
+Bubbles_100Hz_array = detect_and_track_bubbles(IQF_100Hz, BFStruct, frame_offset);
+
+%% 4. Display detection results
+fprintf('\n=== DETECTION RESULTS ===\n');
+fprintf('800 Hz bubbles: %d total\n', size(Bubbles_800Hz_array, 1));
+if ~isempty(Bubbles_800Hz_array)
+    fprintf('  Frame range: %.0f to %.0f\n', ...
+        min(Bubbles_800Hz_array(:,8)), max(Bubbles_800Hz_array(:,8)));
+    fprintf('  Mean track length: %.1f frames\n', mean(Bubbles_800Hz_array(:,5)));
+    fprintf('  Tracks > 5 frames: %.1f%%\n', ...
+        100 * sum(Bubbles_800Hz_array(:,5) > 5) / size(Bubbles_800Hz_array, 1));
+end
+fprintf('100 Hz bubbles: %d total\n', size(Bubbles_100Hz_array, 1));
+if ~isempty(Bubbles_100Hz_array)
+    fprintf('  Frame range: %.0f to %.0f\n', ...
+        min(Bubbles_100Hz_array(:,8)), max(Bubbles_100Hz_array(:,8)));
+    fprintf('  Mean track length: %.1f frames\n', mean(Bubbles_100Hz_array(:,5)));
+    fprintf('  Tracks > 5 frames: %.1f%%\n', ...
+        100 * sum(Bubbles_100Hz_array(:,5) > 5) / size(Bubbles_100Hz_array, 1));
+end
+fprintf('Detection ratio: 100Hz detected %.1f%% of bubbles compared to 800Hz\n', ...
+    100 * size(Bubbles_100Hz_array, 1) / max(1, size(Bubbles_800Hz_array, 1)));
+
+%% 5. Calculate metrics for both frame rates
 fprintf('\n=== Calculating Tracking Metrics ===\n');
 
 % Calculate metrics for 800 Hz
@@ -74,7 +95,7 @@ metrics_800Hz = calculate_tracking_metrics(Bubbles_800Hz_array, IQ_800Hz, framer
 fprintf('Analyzing 100 Hz data...\n');
 metrics_100Hz = calculate_tracking_metrics(Bubbles_100Hz_array, IQ_100Hz, framerate_100Hz, '100Hz');
 
-%% 5. Generate density maps for comparison
+%% 6. Generate density maps for comparison
 fprintf('\n=== Generating Density Maps ===\n');
 
 % Common parameters for density map generation
@@ -85,21 +106,28 @@ pixel_size = 0.1*[1 1];
 
 % 800 Hz density map
 fprintf('Generating 800 Hz density map...\n');
-kept_indices_800 = Bubbles_800Hz_array(:,5) > min_size_track;
+% Filter by track length for better quality
+kept_indices_800Hz = Bubbles_800Hz_array(:, 5) > min_size_track;
+fprintf('  Using %d bubbles (track length > %d)\n', sum(kept_indices_800Hz), min_size_track);
 density_map_800Hz = displayImageFromPositions(...
-    Bubbles_800Hz_array(kept_indices_800, 2), ...
-    Bubbles_800Hz_array(kept_indices_800, 1), ...
+    Bubbles_800Hz_array(kept_indices_800Hz, 2), ...  % Z positions
+    Bubbles_800Hz_array(kept_indices_800Hz, 1), ...  % X positions
     ZX_boundaries, grid_size, pixel_size);
+fprintf('  Density map range: [%.6f, %.6f]\n', min(density_map_800Hz(:)), max(density_map_800Hz(:)));
+fprintf('  Non-zero pixels: %d\n', sum(density_map_800Hz(:) > 0));
 
 % 100 Hz density map
 fprintf('Generating 100 Hz density map...\n');
-kept_indices_100 = Bubbles_100Hz_array(:,5) > min_size_track;
+kept_indices_100Hz = Bubbles_100Hz_array(:, 5) > min_size_track;
+fprintf('  Using %d bubbles (track length > %d)\n', sum(kept_indices_100Hz), min_size_track);
 density_map_100Hz = displayImageFromPositions(...
-    Bubbles_100Hz_array(kept_indices_100, 2), ...
-    Bubbles_100Hz_array(kept_indices_100, 1), ...
+    Bubbles_100Hz_array(kept_indices_100Hz, 2), ...  % Z positions
+    Bubbles_100Hz_array(kept_indices_100Hz, 1), ...  % X positions
     ZX_boundaries, grid_size, pixel_size);
+fprintf('  Density map range: [%.6f, %.6f]\n', min(density_map_100Hz(:)), max(density_map_100Hz(:)));
+fprintf('  Non-zero pixels: %d\n', sum(density_map_100Hz(:) > 0));
 
-%% 5. Calculate image quality metrics
+%% 7. Calculate image quality metrics
 fprintf('\n=== Calculating Image Quality Metrics ===\n');
 
 % Normalize density maps for comparison
@@ -126,7 +154,7 @@ else
     fprintf('SSIM calculation skipped (requires Image Processing Toolbox)\n');
 end
 
-%% 6. Display comprehensive results
+%% 8. Display comprehensive results
 fprintf('\n=================================================\n');
 fprintf('RESULTS SUMMARY: 800 Hz vs 100 Hz Comparison\n');
 fprintf('=================================================\n');
@@ -208,7 +236,7 @@ if ~isnan(ssim_value)
     fprintf('\nStructural similarity (SSIM): %.3f\n', ssim_value);
 end
 
-%% 7. Create visualizations
+%% 9. Create visualizations
 fprintf('\n=== Creating Visualizations ===\n');
 fig_handles = visualize_comparison(density_map_800Hz, density_map_100Hz, ...
     metrics_800Hz, metrics_100Hz, ...
@@ -218,8 +246,10 @@ fig_handles = visualize_comparison(density_map_800Hz, density_map_100Hz, ...
     ZX_boundaries, BFStruct);
 
 % Save figures as PNG
-if ~exist('figures', 'dir')
-    mkdir('figures');
+fprintf('\n=== Saving Figures ===\n');
+figures_dir = fullfile(script_dir, 'figures');
+if ~exist(figures_dir, 'dir')
+    mkdir(figures_dir);
 end
 
 figure_names = {'density_map_comparison', 'raw_vs_filtered', ...
@@ -227,9 +257,11 @@ figure_names = {'density_map_comparison', 'raw_vs_filtered', ...
 
 for i = 1:length(fig_handles)
     if ishghandle(fig_handles(i))
-        filename = fullfile('figures', sprintf('%s.png', figure_names{i}));
+        filename = fullfile(figures_dir, sprintf('%s.png', figure_names{i}));
         saveas(fig_handles(i), filename);
-        fprintf('Saved figure: %s\n', filename);
+        fprintf('  Saved: %s.png\n', figure_names{i});
+    else
+        warning('Figure %d handle is invalid, cannot save %s', i, figure_names{i});
     end
 end
 
