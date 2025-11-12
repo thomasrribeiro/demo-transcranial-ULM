@@ -3,7 +3,7 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
     IQ_800Hz, IQ_low, ...
     IQF_800Hz, IQF_low, ...
     Bubbles_800Hz, Bubbles_low, ...
-    ZX_boundaries, BFStruct)
+    ZX_boundaries, BFStruct, density_800Hz_downsampled)
 %VISUALIZE_COMPARISON Create comprehensive visualizations comparing frame rates
 %
 %   Creates multiple figures to visualize the impact of frame rate on:
@@ -24,46 +24,88 @@ function fig_handles = visualize_comparison(density_800Hz, density_low, ...
     fprintf('Visualization: 800 Hz (%d frames) vs %d Hz (%d frames), downsample factor = %d\n', ...
         size(IQ_800Hz, 3), low_framerate, size(IQ_low, 3), downsample_factor);
 
-    %% Figure 1: Side-by-side density map comparison
-    fig_handles(1) = figure('Name', 'Density Map Comparison', 'Position', [100 100 1400 600]);
+    %% Figure 1: Side-by-side density map comparison (4 panels)
+    fig_handles(1) = figure('Name', 'Density Map Comparison', 'Position', [100 100 1800 800]);
 
-    % 800 Hz density map
-    subplot(1, 3, 1);
+    % 800 Hz density map (all data)
+    subplot(2, 2, 1);
     imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), density_800Hz.^0.45);
     colormap(gca, hot(256));
     axis tight; axis equal;
     caxis([0 0.95]);
-    title('800 Hz Density Map', 'FontSize', 14);
+    title('800 Hz - All Data', 'FontSize', 14, 'FontWeight', 'bold');
     xlabel('X [mm]'); ylabel('Depth [mm]');
     colorbar;
 
+    % 800 Hz downsampled density map (same # of observations as low framerate)
+    subplot(2, 2, 2);
+    if nargin >= 10 && ~isempty(density_800Hz_downsampled)
+        imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), density_800Hz_downsampled.^0.45);
+        colormap(gca, hot(256));
+        axis tight; axis equal;
+        caxis([0 0.95]);
+        title(sprintf('800 Hz - Downsampled (1/%d observations)', downsample_factor), 'FontSize', 14, 'FontWeight', 'bold');
+        xlabel('X [mm]'); ylabel('Depth [mm]');
+        colorbar;
+        text(0.5, 0.98, 'Shows effect of fewer observations', ...
+            'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+            'VerticalAlignment', 'top', 'Color', 'yellow', 'FontSize', 10, 'FontWeight', 'bold');
+    else
+        text(0.5, 0.5, 'Downsampled density map not provided', ...
+            'Units', 'normalized', 'HorizontalAlignment', 'center');
+    end
+
     % Low framerate density map
-    subplot(1, 3, 2);
+    subplot(2, 2, 3);
     imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), density_low.^0.45);
     colormap(gca, hot(256));
     axis tight; axis equal;
     caxis([0 0.95]);
-    title(sprintf('%d Hz Density Map', low_framerate), 'FontSize', 14);
+    title(sprintf('%d Hz - Actual', low_framerate), 'FontSize', 14, 'FontWeight', 'bold');
     xlabel('X [mm]'); ylabel('Depth [mm]');
     colorbar;
+    text(0.5, 0.98, 'Shows combined effect of sampling + detection', ...
+        'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+        'VerticalAlignment', 'top', 'Color', 'yellow', 'FontSize', 10, 'FontWeight', 'bold');
 
-    % Difference map
-    subplot(1, 3, 3);
-    diff_map = density_800Hz - density_low;
-    imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), diff_map);
-    colormap(gca, coolwarm(256));
-    axis tight; axis equal;
-    max_diff = max(abs(diff_map(:)));
-    if max_diff > 0
-        caxis([-max_diff, max_diff]);
+    % Difference map: 800Hz downsampled vs low framerate
+    subplot(2, 2, 4);
+    if nargin >= 10 && ~isempty(density_800Hz_downsampled)
+        diff_map = density_800Hz_downsampled - density_low;
+        imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), diff_map);
+        colormap(gca, coolwarm(256));
+        axis tight; axis equal;
+        max_diff = max(abs(diff_map(:)));
+        if max_diff > 0
+            caxis([-max_diff, max_diff]);
+        else
+            caxis([-1, 1]);  % Default range if no difference
+        end
+        title(sprintf('Difference (800Hz DS - %dHz)', low_framerate), 'FontSize', 14, 'FontWeight', 'bold');
+        xlabel('X [mm]'); ylabel('Depth [mm]');
+        colorbar;
+        text(0.5, 0.98, 'Isolates temporal sampling effect', ...
+            'Units', 'normalized', 'HorizontalAlignment', 'center', ...
+            'VerticalAlignment', 'top', 'Color', 'yellow', 'FontSize', 10, 'FontWeight', 'bold');
     else
-        caxis([-1, 1]);  % Default range if no difference
+        diff_map = density_800Hz - density_low;
+        imagesc(ZX_boundaries(3:4), -ZX_boundaries(2:-1:1), diff_map);
+        colormap(gca, coolwarm(256));
+        axis tight; axis equal;
+        max_diff = max(abs(diff_map(:)));
+        if max_diff > 0
+            caxis([-max_diff, max_diff]);
+        else
+            caxis([-1, 1]);
+        end
+        title(sprintf('Difference (800Hz - %dHz)', low_framerate), 'FontSize', 14);
+        xlabel('X [mm]'); ylabel('Depth [mm]');
+        colorbar;
     end
-    title(sprintf('Difference (800Hz - %dHz)', low_framerate), 'FontSize', 14);
-    xlabel('X [mm]'); ylabel('Depth [mm]');
-    colorbar;
 
-    sgtitle('Density Map Comparison: Impact of Frame Rate', 'FontSize', 16);
+    sgtitle({'Density Map Comparison: Isolating Effects of Frame Rate', ...
+             'Top row: 800 Hz (all data vs downsampled) | Bottom row: Low framerate actual vs difference'}, ...
+             'FontSize', 16, 'FontWeight', 'bold');
 
     %% Figure 2: Raw vs Filtered Comparison (2x2 grid)
     fig_handles(2) = figure('Name', 'Raw vs Filtered Comparison', 'Position', [100 100 1400 800]);

@@ -19,12 +19,12 @@ clear; clc; close all;
 %% ========== USER PARAMETERS ==========
 % Target frame rate for downsampled comparison (Hz)
 % Must be < 800 Hz. Recommended values: 20, 50, 100, 200
-target_framerate = 100; % Hz
+target_framerate = 50; % Hz
 
 % High-pass filter cutoff frequency (Hz)
-% Will be automatically limited to 95% of Nyquist frequency for lower framerate
-% For fair comparison, should be <= (target_framerate / 2) * 0.95
-cutoff_freq = 40; % Hz (recommended: ~80% of target Nyquist)
+% Automatically computed as 80% of Nyquist frequency for fair comparison
+% This ensures the same frequency content is filtered for both datasets
+cutoff_freq = 0.8 * (target_framerate / 2); % Hz (80% of Nyquist)
 %% ======================================
 
 % Add script directory and functions to path
@@ -294,7 +294,7 @@ fig_handles = visualize_comparison(density_map_800Hz, density_map_low, ...
     IQ_800Hz, IQ_low, ...
     IQF_800Hz, IQF_low, ...
     Bubbles_800Hz_array, Bubbles_low_array, ...
-    ZX_boundaries, BFStruct);
+    ZX_boundaries, BFStruct, density_map_800Hz_downsampled);
 
 % Save figures as PNG
 fprintf('\n=== Saving Figures ===\n');
