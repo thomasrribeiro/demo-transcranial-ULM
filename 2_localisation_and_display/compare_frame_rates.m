@@ -32,10 +32,14 @@ load('Raw_ultrasonic_data_1s.mat');
 % Store original data
 IQ_800Hz = double(IQ);
 framerate_800Hz = 800; % Hz
+num_frames_800Hz = size(IQ_800Hz, 3);
 
 % Apply SVD filtering to reveal bubbles
-fprintf('Applying SVD filtering to 800 Hz data...\n');
-IQF_800Hz = filterSVD(IQ_800Hz, 30);
+% Number of singular values to remove should scale with number of frames
+sv_cutoff_800Hz = 30;
+fprintf('Applying SVD filtering to 800 Hz data (%d frames, removing %d singular values = %.1f%% of frames)...\n', ...
+    num_frames_800Hz, sv_cutoff_800Hz, 100*sv_cutoff_800Hz/num_frames_800Hz);
+IQF_800Hz = filterSVD(IQ_800Hz, sv_cutoff_800Hz);
 
 %% 2. Create downsampled 100 Hz version
 fprintf('\nCreating 100 Hz downsampled version...\n');
@@ -45,9 +49,12 @@ framerate_100Hz = framerate_800Hz / downsample_factor;
 
 % Downsample IQ data - take every nth frame
 IQ_100Hz = IQ_800Hz(:, :, 1:downsample_factor:end);
+num_frames_100Hz = size(IQ_100Hz, 3);
 
-% Apply SVD filtering to downsampled data
-fprintf('Applying SVD filtering to 100 Hz data...\n');
+% Scale SVD cutoff proportionally to number of frames
+sv_cutoff_100Hz = round(sv_cutoff_800Hz * num_frames_100Hz / num_frames_800Hz);
+fprintf('Applying SVD filtering to 100 Hz data (%d frames, removing %d singular values = %.1f%% of frames)...\n', ...
+    num_frames_100Hz, sv_cutoff_100Hz, 100*sv_cutoff_100Hz/num_frames_100Hz);
 IQF_100Hz = filterSVD(IQ_100Hz, 30);
 
 %% 3. Perform bubble detection and tracking using professional ULM

@@ -61,27 +61,42 @@ function fig_handles = visualize_comparison(density_800Hz, density_100Hz, ...
     %% Figure 2: Raw vs Filtered Comparison (2x2 grid)
     fig_handles(2) = figure('Name', 'Raw vs Filtered Comparison', 'Position', [100 100 1400 800]);
 
-    % Find a frame with good bubble detection
-    % The data is from frames 7200-7999, need to map to 1-800 range
-    actual_frame_numbers = Bubbles_800Hz(:,3);
-    min_frame_actual = min(actual_frame_numbers);
-    mapped_frames = actual_frame_numbers - min_frame_actual + 1;
+    % Find a frame with good bubble detection for BOTH datasets
+    % Column 8 contains the frame number in trajectory
+    actual_frame_numbers_800 = Bubbles_800Hz(:,8);
+    min_frame_actual_800 = min(actual_frame_numbers_800);
 
-    % Count bubbles per mapped frame (1-800)
-    frame_counts = histcounts(mapped_frames, 1:size(IQ_800Hz,3)+1);
+    actual_frame_numbers_100 = Bubbles_100Hz(:,8);
+    min_frame_actual_100 = min(actual_frame_numbers_100);
 
-    % Find frames divisible by 8 (for clean 100Hz comparison) with bubbles
+    % Map to 1-based frame indices for 800Hz
+    mapped_frames_800 = actual_frame_numbers_800 - min_frame_actual_800 + 1;
+    frame_counts_800 = histcounts(mapped_frames_800, 1:size(IQ_800Hz,3)+1);
+
+    % Map to 1-based frame indices for 100Hz
+    mapped_frames_100 = actual_frame_numbers_100 - min_frame_actual_100 + 1;
+    frame_counts_100 = histcounts(mapped_frames_100, 1:size(IQ_100Hz,3)+1);
+
+    % Find frames divisible by 8 that have bubbles in BOTH datasets
     frames_div_by_8 = 8:8:size(IQ_800Hz,3);
-    bubble_counts_div8 = frame_counts(frames_div_by_8);
-    [~, idx] = max(bubble_counts_div8);
+    combined_scores = zeros(size(frames_div_by_8));
 
-    % Use frame with most bubbles (frame 656 has 93 bubbles)
-    if max(bubble_counts_div8) > 0
-        frame_idx = frames_div_by_8(idx);
-    else
-        frame_idx = min(656, size(IQ_800Hz, 3));  % Use frame 656 which has 93 bubbles
+    for i = 1:length(frames_div_by_8)
+        frame_800 = frames_div_by_8(i);
+        frame_100 = ceil(frame_800/8);
+        % Score prioritizes frames with bubbles in both, but heavily weights 100Hz
+        bubbles_800 = frame_counts_800(frame_800);
+        bubbles_100 = (frame_100 <= size(IQ_100Hz,3)) * frame_counts_100(frame_100);
+        combined_scores(i) = bubbles_100 * 100 + bubbles_800;  % Prioritize 100Hz
     end
+
+    [max_score, idx] = max(combined_scores);
+    frame_idx = frames_div_by_8(idx);
     frame_idx_100 = ceil(frame_idx/8);
+
+    fprintf('    Frame selection: 800Hz frame %d (%d bubbles), 100Hz frame %d (%d bubbles)\n', ...
+        frame_idx, frame_counts_800(frame_idx), ...
+        frame_idx_100, frame_counts_100(frame_idx_100));
 
     % Scan convert RAW IQ data
     [IQ_800Hz_scan, SpaceInfoOut] = scanConversion(abs(IQ_800Hz(:,:,frame_idx)), ...
@@ -100,11 +115,12 @@ function fig_handles = visualize_comparison(density_800Hz, density_100Hz, ...
 
     % Get bubble positions for each dataset
     % Shows ACTUAL detected bubbles - they WILL differ due to SVD filtering quality!
-    % Need to use actual frame numbers (7200+ range)
-    actual_frame_800 = min_frame_actual + frame_idx - 1;
-    actual_frame_100 = min_frame_actual + (frame_idx_100 - 1) * 8;
-    frame_bubbles_800 = Bubbles_800Hz(Bubbles_800Hz(:,3) == actual_frame_800, :);
-    frame_bubbles_100 = Bubbles_100Hz(Bubbles_100Hz(:,3) == actual_frame_100, :);
+    % Column 8 contains the trajectory frame number (1-based within this acquisition)
+    frame_bubbles_800 = Bubbles_800Hz(Bubbles_800Hz(:,8) == min_frame_actual_800 + frame_idx - 1, :);
+    frame_bubbles_100 = Bubbles_100Hz(Bubbles_100Hz(:,8) == min_frame_actual_100 + frame_idx_100 - 1, :);
+
+    fprintf('    Displaying frame %d for 800Hz: %d bubbles\n', frame_idx, size(frame_bubbles_800, 1));
+    fprintf('    Displaying frame %d for 100Hz: %d bubbles\n', frame_idx_100, size(frame_bubbles_100, 1));
 
     % TOP ROW: Raw beamformed data (should be identical)
     % Top Left: 800 Hz Raw
@@ -137,7 +153,7 @@ function fig_handles = visualize_comparison(density_800Hz, density_100Hz, ...
     caxis([-25 0]);
     hold on;
     if ~isempty(frame_bubbles_800)
-        plot(frame_bubbles_800(:,1), -frame_bubbles_800(:,2)+BFStruct.BFOrigin(2), ...
+        plot(frame_bubbles_800(:,1), -frame_bubbles_800(:,2), ...
             'r+', 'MarkerSize', 8, 'LineWidth', 1.5);
     end
     hold off;
@@ -155,7 +171,7 @@ function fig_handles = visualize_comparison(density_800Hz, density_100Hz, ...
     caxis([-25 0]);
     hold on;
     if ~isempty(frame_bubbles_100)
-        plot(frame_bubbles_100(:,1), -frame_bubbles_100(:,2)+BFStruct.BFOrigin(2), ...
+        plot(frame_bubbles_100(:,1), -frame_bubbles_100(:,2), ...
             'r+', 'MarkerSize', 8, 'LineWidth', 1.5);
     end
     hold off;
@@ -323,15 +339,15 @@ function plot_trajectories(Bubbles_data, x_roi, z_roi, BFStruct, title_str)
 
                 % Plot trajectory
                 color_idx = mod(i-1, size(colors, 1)) + 1;
-                plot(track_data(:, 1), -track_data(:, 2) + BFStruct.BFOrigin(2), ...
+                plot(track_data(:, 1), -track_data(:, 2), ...
                     '-', 'Color', [colors(color_idx, :), 0.5], 'LineWidth', 1);
-                plot(track_data(:, 1), -track_data(:, 2) + BFStruct.BFOrigin(2), ...
+                plot(track_data(:, 1), -track_data(:, 2), ...
                     '.', 'Color', colors(color_idx, :), 'MarkerSize', 4);
             end
         end
     else
         % Just plot points if no trajectory info
-        plot(roi_bubbles(:, 1), -roi_bubbles(:, 2) + BFStruct.BFOrigin(2), ...
+        plot(roi_bubbles(:, 1), -roi_bubbles(:, 2), ...
             'r.', 'MarkerSize', 2);
     end
 
