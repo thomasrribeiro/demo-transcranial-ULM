@@ -1,0 +1,218 @@
+"""
+High-pass temporal filtering for bubble detection in ultrasound data.
+Equivalent to MATLAB's filterHighPass function.
+"""
+
+import numpy as np
+from scipy import signal
+from typing import Optional, Tuple
+
+
+def filter_highpass(iq_data: np.ndarray,
+                   framerate: float,
+                   cutoff_freq: float,
+                   order: int = 4,
+                   method: str = 'butterworth') -> np.ndarray:
+    """
+    Apply temporal high-pass filter to ultrasound IQ data.
+
+    Removes low-frequency tissue motion while preserving high-frequency
+    bubble signals.
+
+    Parameters
+    ----------
+    iq_data : np.ndarray
+        Complex IQ data with shape (nz, nx, nt) or (nx, nz, nt)
+    framerate : float
+        Acquisition frame rate in Hz
+    cutoff_freq : float
+        High-pass filter cutoff frequency in Hz
+    order : int, default=4
+        Filter order (for Butterworth filter)
+    method : str, default='butterworth'
+        Filter type: 'butterworth' or 'fir'
+
+    Returns
+    -------
+    np.ndarray
+        Filtered IQ data with same shape as input
+
+    Notes
+    -----
+    Uses zero-phase filtering (filtfilt) to avoid phase distortion.
+    Default is 4th order Butterworth as in the MATLAB implementation.
+    """
+
+    # Get dimensions
+    if iq_data.ndim == 3:
+        nz, nx, nt = iq_data.shape
+        # Reshape for filtering along time dimension
+        iq_reshaped = iq_data.reshape((nz * nx, nt))
+    else:
+        raise ValueError(f"Expected 3D array, got shape {iq_data.shape}")
+
+    # Nyquist frequency
+    nyquist = framerate / 2
+
+    # Validate cutoff frequency
+    if cutoff_freq >= nyquist:
+        print(f"Warning: Cutoff frequency ({cutoff_freq} Hz) >= Nyquist ({nyquist} Hz)")
+        cutoff_freq = min(cutoff_freq, 0.95 * nyquist)
+        print(f"Limiting cutoff to {cutoff_freq} Hz")
+
+    # Design filter
+    if method == 'butterworth':
+        # Butterworth high-pass filter
+        sos = signal.butter(order, cutoff_freq, btype='high',
+                           fs=framerate, output='sos')
+
+        # Apply zero-phase filtering to each spatial location
+        iq_filtered = np.zeros_like(iq_reshaped)
+        for i in range(iq_reshaped.shape[0]):
+            # Handle complex data: filter real and imaginary separately
+            if np.iscomplexobj(iq_reshaped):
+                real_filt = signal.sosfiltfilt(sos, np.real(iq_reshaped[i, :]))
+                imag_filt = signal.sosfiltfilt(sos, np.imag(iq_reshaped[i, :]))
+                iq_filtered[i, :] = real_filt + 1j * imag_filt
+            else:
+                iq_filtered[i, :] = signal.sosfiltfilt(sos, iq_reshaped[i, :])
+
+    elif method == 'fir':
+        # FIR high-pass filter
+        numtaps = min(101, nt // 3)  # Ensure filter length is appropriate
+        if numtaps % 2 == 0:
+            numtaps += 1  # Make odd for type I filter
+
+        # Design FIR filter
+        fir_coeff = signal.firwin(numtaps, cutoff_freq, pass_zero=False,
+                                 fs=framerate, window='hamming')
+
+        # Apply zero-phase filtering
+        iq_filtered = np.zeros_like(iq_reshaped)
+        for i in range(iq_reshaped.shape[0]):
+            if np.iscomplexobj(iq_reshaped):
+                real_filt = signal.filtfilt(fir_coeff, 1, np.real(iq_reshaped[i, :]))
+                imag_filt = signal.filtfilt(fir_coeff, 1, np.imag(iq_reshaped[i, :]))
+                iq_filtered[i, :] = real_filt + 1j * imag_filt
+            else:
+                iq_filtered[i, :] = signal.filtfilt(fir_coeff, 1, iq_reshaped[i, :])
+
+    else:
+        raise ValueError(f"Unknown filter method: {method}")
+
+    # Reshape back to original dimensions
+    return iq_filtered.reshape((nz, nx, nt))
+
+
+def design_highpass_filter(framerate: float,
+                          cutoff_freq: float,
+                          order: int = 4) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Design a high-pass Butterworth filter and return frequency response.
+
+    Parameters
+    ----------
+    framerate : float
+        Sampling frequency in Hz
+    cutoff_freq : float
+        Cutoff frequency in Hz
+    order : int, default=4
+        Filter order
+
+    Returns
+    -------
+    tuple
+        - w: Frequency array (Hz)
+        - h: Complex frequency response
+    """
+
+    # Design filter
+    sos = signal.butter(order, cutoff_freq, btype='high',
+                       fs=framerate, output='sos')
+
+    # Compute frequency response
+    w, h = signal.sosfreqz(sos, worN=512, fs=framerate)
+
+    return w, h
+
+
+def bandpass_filter(iq_data: np.ndarray,
+                   framerate: float,
+                   low_freq: float,
+                   high_freq: float,
+                   order: int = 4) -> np.ndarray:
+    """
+    Apply bandpass filter for specific frequency range bubble detection.
+
+    Parameters
+    ----------
+    iq_data : np.ndarray
+        Complex IQ data with shape (nz, nx, nt)
+    framerate : float
+        Acquisition frame rate in Hz
+    low_freq : float
+        Low cutoff frequency in Hz
+    high_freq : float
+        High cutoff frequency in Hz
+    order : int, default=4
+        Filter order
+
+    Returns
+    -------
+    np.ndarray
+        Bandpass filtered data
+    """
+
+    nz, nx, nt = iq_data.shape
+    iq_reshaped = iq_data.reshape((nz * nx, nt))
+
+    # Validate frequencies
+    nyquist = framerate / 2
+    if high_freq >= nyquist:
+        high_freq = 0.95 * nyquist
+        print(f"Limiting high frequency to {high_freq} Hz")
+
+    # Design bandpass filter
+    sos = signal.butter(order, [low_freq, high_freq], btype='band',
+                       fs=framerate, output='sos')
+
+    # Apply filter
+    iq_filtered = np.zeros_like(iq_reshaped)
+    for i in range(iq_reshaped.shape[0]):
+        if np.iscomplexobj(iq_reshaped):
+            real_filt = signal.sosfiltfilt(sos, np.real(iq_reshaped[i, :]))
+            imag_filt = signal.sosfiltfilt(sos, np.imag(iq_reshaped[i, :]))
+            iq_filtered[i, :] = real_filt + 1j * imag_filt
+        else:
+            iq_filtered[i, :] = signal.sosfiltfilt(sos, iq_reshaped[i, :])
+
+    return iq_filtered.reshape((nz, nx, nt))
+
+
+def wall_filter(iq_data: np.ndarray,
+               framerate: float,
+               cutoff_freq: Optional[float] = None) -> np.ndarray:
+    """
+    Apply wall filter (clutter filter) for Doppler processing.
+
+    Removes stationary or slowly moving tissue signal.
+
+    Parameters
+    ----------
+    iq_data : np.ndarray
+        Complex IQ data
+    framerate : float
+        Frame rate in Hz
+    cutoff_freq : float, optional
+        Cutoff frequency. If None, uses 10% of PRF
+
+    Returns
+    -------
+    np.ndarray
+        Wall-filtered data
+    """
+
+    if cutoff_freq is None:
+        cutoff_freq = 0.1 * framerate  # 10% of PRF
+
+    return filter_highpass(iq_data, framerate, cutoff_freq, order=2)
