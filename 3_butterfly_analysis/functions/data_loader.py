@@ -37,10 +37,6 @@ def load_acquisition_data(h5_file_path: str,
     with h5py.File(h5_file_path, 'r') as f:
         acq_path = f'acquisitions/{acq_idx}/meta'
 
-        # Load data
-        compound_image = f[f'{acq_path}/compound_image'][:]
-        doppler_signal = f[f'{acq_path}/doppler_signal'][:]
-
         # Load metadata
         acquisition_config = json.loads(f[f'{acq_path}/acquisition_config'][()].decode('utf-8'))
         runtime_metadata = json.loads(f[f'{acq_path}/runtime_metadata'][()].decode('utf-8'))
@@ -49,17 +45,41 @@ def load_acquisition_data(h5_file_path: str,
         framerate = runtime_metadata.get('empirical_pulse_repetition_rate_hz', 1590.0)
         speed_of_sound = acquisition_config.get('speed_of_sound', 1540)
 
+        # Load data - prioritize compound_image for consistency with old results
+        if f'{acq_path}/compound_image' in f:
+            # Old format: compound_image (nt, 1, nx, nz)
+            compound_image = f[f'{acq_path}/compound_image'][:]
+            doppler_signal = f[f'{acq_path}/doppler_signal'][:] if f'{acq_path}/doppler_signal' in f else None
+
+            # Reshape IQ data: (nt, 1, nx, nz) -> (nt, nx, nz) -> (nx, nz, nt)
+            iq_data = compound_image[:, 0, :, :].transpose(1, 2, 0)
+
+        elif f'{acq_path}/iq_frames' in f:
+            # New format: iq_frames
+            iq_frames = f[f'{acq_path}/iq_frames'][:]
+            # Shape: (nt, num_angles, 1, nz, nx)
+            compound_image = iq_frames
+            doppler_signal = None
+
+            # Reshape to (nx, nz, nt) to match compound_image behavior
+            # Average over angles dimension
+            iq_data = np.mean(iq_frames[:, :, 0, :, :], axis=1)  # (nt, nz, nx)
+            iq_data = iq_data.transpose(2, 1, 0)  # (nx, nz, nt)
+
+        else:
+            raise ValueError(f"No IQ data found in acquisition {acq_idx}")
+
+        # Get dimensions from reshaped data
+        # Note: iq_data is (nx, nz, nt) for backward compatibility
+        nx, nz, nt = iq_data.shape
+
         # Load grid
         if f'{acq_path}/grid' in f:
             grid_x = f[f'{acq_path}/grid/x'][:]
             grid_z = f[f'{acq_path}/grid/z'][:]
         else:
-            nz, nx = compound_image.shape[2:4]
             grid_x = np.linspace(-50, 50, nx)
             grid_z = np.linspace(10, 120, nz)
-
-    # Reshape IQ data
-    iq_data = compound_image[:, 0, :, :].transpose(1, 2, 0)
 
     return {
         'compound_image': compound_image,

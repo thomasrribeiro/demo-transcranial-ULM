@@ -377,3 +377,97 @@ def create_summary_figure(bubble_array: np.ndarray,
     plt.suptitle(title, fontsize=16, fontweight='bold')
     plt.tight_layout()
     return fig
+
+
+def plot_iq_data_raw(iq_frame: np.ndarray,
+                     title: str = "IQ Data - Single Frame") -> plt.Figure:
+    """
+    Plot raw IQ data showing magnitude and phase.
+
+    Parameters
+    ----------
+    iq_frame : np.ndarray
+        Complex IQ data for single frame (nz, nx)
+    title : str
+        Figure title
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure
+    """
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Magnitude
+    magnitude = np.abs(iq_frame)
+    im1 = axes[0].imshow(magnitude, cmap='gray', aspect='auto')
+    axes[0].set_title('Magnitude', fontsize=12, fontweight='bold')
+    axes[0].set_xlabel('Lateral [pixels]')
+    axes[0].set_ylabel('Depth [pixels]')
+
+    divider = make_axes_locatable(axes[0])
+    cax1 = divider.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(im1, cax=cax1, label='Magnitude')
+
+    # Phase
+    phase = np.angle(iq_frame)
+    im2 = axes[1].imshow(phase, cmap='hsv', aspect='auto', vmin=-np.pi, vmax=np.pi)
+    axes[1].set_title('Phase', fontsize=12, fontweight='bold')
+    axes[1].set_xlabel('Lateral [pixels]')
+    axes[1].set_ylabel('Depth [pixels]')
+
+    divider = make_axes_locatable(axes[1])
+    cax2 = divider.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(im2, cax=cax2, label='Phase [rad]')
+
+    plt.suptitle(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig
+
+
+def plot_beamformed_image(iq_frame: np.ndarray,
+                         title: str = "Beamformed Image") -> plt.Figure:
+    """
+    Plot beamformed ultrasound image (magnitude in dB and linear).
+
+    Parameters
+    ----------
+    iq_frame : np.ndarray
+        Complex IQ data for single frame (nz, nx)
+    title : str
+        Figure title
+
+    Returns
+    -------
+    plt.Figure
+        Matplotlib figure
+    """
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Linear magnitude
+    magnitude = np.abs(iq_frame)
+    im1 = axes[0].imshow(magnitude, cmap='gray', aspect='auto')
+    axes[0].set_title('Linear Magnitude', fontsize=12, fontweight='bold')
+    axes[0].set_xlabel('Lateral [pixels]')
+    axes[0].set_ylabel('Depth [pixels]')
+
+    divider = make_axes_locatable(axes[0])
+    cax1 = divider.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(im1, cax=cax1, label='Magnitude')
+
+    # Log magnitude (dB)
+    magnitude_db = 20 * np.log10(magnitude / np.max(magnitude) + 1e-10)
+    im2 = axes[1].imshow(magnitude_db, cmap='gray', aspect='auto', vmin=-40, vmax=0)
+    axes[1].set_title('Log Magnitude (dB)', fontsize=12, fontweight='bold')
+    axes[1].set_xlabel('Lateral [pixels]')
+    axes[1].set_ylabel('Depth [pixels]')
+
+    divider = make_axes_locatable(axes[1])
+    cax2 = divider.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(im2, cax=cax2, label='Magnitude [dB]')
+
+    plt.suptitle(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    return fig

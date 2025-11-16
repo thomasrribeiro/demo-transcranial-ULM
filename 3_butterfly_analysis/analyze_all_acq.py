@@ -6,6 +6,8 @@ This script processes every acquisition in the H5 file, performs bubble detectio
 and tracking, and saves density maps and metrics for each.
 """
 
+# -rw-rw-r-- 1 monster monster 177748008414 Nov 13 12:48 ultratrace_BT22041607_monster_2025-11-13_12:48:41.h5
+
 #%% Import libraries
 import sys
 import os
@@ -19,8 +21,7 @@ from tqdm import tqdm
 
 # Import custom functions
 from functions import (load_acquisition_data, get_num_acquisitions, print_h5_structure,
-                      process_ulm_pipeline, plot_ulm_results, print_metrics_summary,
-                      create_velocity_map, create_density_map)
+                      process_ulm_pipeline, create_velocity_map, create_density_map)
 
 plt.rcParams['figure.dpi'] = 100
 plt.rcParams['savefig.dpi'] = 150
@@ -67,97 +68,94 @@ print(f"Will process acquisitions {START_ACQ} to {END_ACQ-1} ({len(acq_range)} t
 all_results = {}
 all_metrics = {}
 
+# For progressive plotting
+PLOT_EVERY_N = 10  # Save accumulated density map every N acquisitions
+accumulated_bubbles = []
+global_nz = 0
+global_nx = 0
+
+# Create directory for progressive plots
+progressive_dir = f'{output_dir}/progressive_plots'
+os.makedirs(progressive_dir, exist_ok=True)
+
 for acq_idx in tqdm(acq_range, desc="Processing acquisitions"):
     try:
-        print(f"\n{'='*60}")
-        print(f"Processing Acquisition {acq_idx}")
-        print(f"{'='*60}")
-
         # Load data
-        print(f"\nLoading acquisition {acq_idx}...")
         data = load_acquisition_data(h5_file_path, acq_idx=acq_idx)
 
         iq_data = data['iq_data']
         framerate = data['framerate']
         nz, nx, nt = iq_data.shape
 
-        print(f"  Data shape: {nz} x {nx} x {nt}")
-        print(f"  Frame rate: {framerate:.1f} Hz")
+        # Track max dimensions
+        global_nz = max(global_nz, nz)
+        global_nx = max(global_nx, nx)
 
-        # Process ULM pipeline
+        # Process ULM pipeline (verbose=False to suppress prints)
         results = process_ulm_pipeline(
             iq_data,
             framerate,
             filter_method=FILTER_METHOD,
             use_gpu=USE_GPU,
             min_track_length=MIN_TRACK_LENGTH,
-            verbose=True
+            verbose=False
         )
 
         # Check if we got results
         if results['density_map'] is None:
-            print(f"  Warning: No density map generated for acquisition {acq_idx}")
             continue
 
-        # Create velocity map
+        # Store bubble array in memory for combined processing
         if len(results['bubble_array']) > 0:
             mask = results['bubble_array'][:, 4] >= MIN_TRACK_LENGTH
             filtered_bubbles = results['bubble_array'][mask]
 
             if len(filtered_bubbles) > 0:
-                boundaries = (0, nz, 0, nx)
-                grid_size = (nz * 2, nx * 2)
-                velocity_map = create_velocity_map(filtered_bubbles, boundaries,
-                                                  grid_size, velocity_component='magnitude')
-            else:
-                velocity_map = None
-        else:
-            velocity_map = None
+                all_results[f'acq{acq_idx}'] = {
+                    'bubble_array': filtered_bubbles,
+                    'n_bubbles': len(results['bubble_array']),
+                    'n_frames': nt,
+                    'framerate': framerate,
+                    'nz': nz,
+                    'nx': nx
+                }
 
-        # Save results
-        all_results[f'acq{acq_idx}'] = {
-            'density_map': results['density_map'],
-            'velocity_map': velocity_map,
-            'n_bubbles': len(results['bubble_array']),
-            'n_frames': nt,
-            'framerate': framerate
-        }
+                # Add to accumulated bubbles for progressive plotting
+                accumulated_bubbles.append(filtered_bubbles)
 
         if results['metrics'] is not None:
             all_metrics[f'acq{acq_idx}'] = results['metrics']
 
-        # Save density map
-        np.save(f'{output_dir}/density_map_acq{acq_idx}.npy', results['density_map'])
-        if velocity_map is not None:
-            np.save(f'{output_dir}/velocity_map_acq{acq_idx}.npy', velocity_map)
+        # Save accumulated density map every N acquisitions
+        if len(accumulated_bubbles) > 0 and (acq_idx + 1) % PLOT_EVERY_N == 0:
+            combined_bubbles = np.vstack(accumulated_bubbles)
+            boundaries = (0, global_nz, 0, global_nx)
+            grid_size = (global_nz * 2, global_nx * 2)
 
-        # Save bubble array
-        if len(results['bubble_array']) > 0:
-            np.save(f'{output_dir}/bubble_array_acq{acq_idx}.npy', results['bubble_array'])
+            progressive_density_map = create_density_map(
+                combined_bubbles[:, 0],  # x positions
+                combined_bubbles[:, 1],  # z positions
+                boundaries,
+                grid_size,
+                gaussian_sigma=2.0
+            )
 
-        # Plot and save results
-        fig = plot_ulm_results(
-            results['density_map'],
-            velocity_map,
-            nz, nx,
-            len(results['bubble_array'][results['bubble_array'][:, 4] >= MIN_TRACK_LENGTH]),
-            nt,
-            framerate,
-            title=f'Acquisition {acq_idx} ULM Results'
-        )
-        fig.savefig(f'{output_dir}/ulm_results_acq{acq_idx}.png', dpi=150, bbox_inches='tight')
-        plt.close(fig)
+            # Create and save plot
+            fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+            im = ax.imshow(progressive_density_map, cmap='hot', aspect='auto', origin='lower')
+            ax.set_title(f'Accumulated Density Map (Acq 0-{acq_idx}, n={len(combined_bubbles)} tracks)')
+            ax.set_xlabel('X (pixels)')
+            ax.set_ylabel('Z (pixels)')
+            plt.colorbar(im, ax=ax, label='Density')
 
-        # Print metrics
-        if results['metrics'] is not None:
-            print_metrics_summary(results['metrics'])
-
-        print(f"\n  Results saved for acquisition {acq_idx}")
+            # Save figure
+            fig.savefig(f'{progressive_dir}/density_acq_{acq_idx:04d}.png',
+                       dpi=150, bbox_inches='tight')
+            # plt.close(fig)
+            plt.show()
 
     except Exception as e:
-        print(f"\n  ERROR processing acquisition {acq_idx}: {e}")
-        import traceback
-        traceback.print_exc()
+        # Silently skip failed acquisitions
         continue
 
 #%% Summary statistics
@@ -204,29 +202,19 @@ if all_results:
     print("GENERATING COMBINED DENSITY MAP FROM ALL ACQUISITIONS")
     print("="*60)
 
-    # Collect all bubble positions from all acquisitions
+    # Collect all bubble positions from all acquisitions (already in memory)
     all_bubbles = []
     global_nz = 0
     global_nx = 0
 
     for key, val in all_results.items():
-        acq_idx = int(key.replace('acq', ''))
+        bubble_array = val['bubble_array']  # Already filtered by MIN_TRACK_LENGTH
 
-        # Load bubble array for this acquisition
-        bubble_file = f'{output_dir}/bubble_array_acq{acq_idx}.npy'
-        if os.path.exists(bubble_file):
-            bubble_array = np.load(bubble_file)
+        all_bubbles.append(bubble_array)
 
-            # Filter by minimum track length
-            mask = bubble_array[:, 4] >= MIN_TRACK_LENGTH
-            filtered_bubbles = bubble_array[mask]
-
-            if len(filtered_bubbles) > 0:
-                all_bubbles.append(filtered_bubbles)
-
-                # Track max dimensions
-                global_nz = max(global_nz, int(np.max(filtered_bubbles[:, 1])) + 1)
-                global_nx = max(global_nx, int(np.max(filtered_bubbles[:, 0])) + 1)
+        # Track max dimensions
+        global_nz = max(global_nz, val['nz'])
+        global_nx = max(global_nx, val['nx'])
 
     if all_bubbles:
         # Concatenate all bubble positions
@@ -257,30 +245,12 @@ if all_results:
             velocity_component='magnitude'
         )
 
-        # Save combined maps
+        # Save ONLY combined density and velocity maps (no other files)
         np.save(f'{output_dir}/combined_density_map.npy', combined_density_map)
         np.save(f'{output_dir}/combined_velocity_map.npy', combined_velocity_map)
-        np.save(f'{output_dir}/combined_bubble_array.npy', combined_bubbles)
 
-        print(f"\nCombined density map saved to {output_dir}/combined_density_map.npy")
-        print(f"Combined velocity map saved to {output_dir}/combined_velocity_map.npy")
-        print(f"Combined bubble array saved to {output_dir}/combined_bubble_array.npy")
-
-        # Plot combined results
-        fig = plot_ulm_results(
-            combined_density_map,
-            combined_velocity_map,
-            global_nz,
-            global_nx,
-            len(combined_bubbles),
-            sum(v['n_frames'] for v in all_results.values()),
-            sum(v['framerate'] for v in all_results.values()) / len(all_results),
-            title='Combined ULM Results - All Acquisitions'
-        )
-        fig.savefig(f'{output_dir}/combined_ulm_results.png', dpi=150, bbox_inches='tight')
-        plt.close(fig)
-
-        print(f"Combined visualization saved to {output_dir}/combined_ulm_results.png")
+        print(f"\n✓ Combined density map saved to {output_dir}/combined_density_map.npy")
+        print(f"✓ Combined velocity map saved to {output_dir}/combined_velocity_map.npy")
     else:
         print("\nNo bubbles found across acquisitions to create combined density map")
 
