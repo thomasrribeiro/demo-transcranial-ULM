@@ -110,7 +110,12 @@ for acq_idx in tqdm(all_indices, desc="Processing acquisitions"):
         data = load_acquisition_data(h5_file_path, acq_idx=acq_idx)
         iq_data = data['iq_data']
         framerate = data['framerate']
-        nz, nx, nt = iq_data.shape
+        if iq_data.ndim == 3:
+            nz, nx, nt = iq_data.shape
+        elif iq_data.ndim == 4:
+            ny, nz, nx, nt = iq_data.shape
+        else:
+            raise ValueError(f"iq_data must be 3D or 4D, got shape {iq_data.shape}")
 
         # Track dimensions
         global_nz = max(global_nz, nz)

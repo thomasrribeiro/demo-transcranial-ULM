@@ -32,7 +32,8 @@ def filter_highpass(iq_data: np.ndarray,
     Parameters
     ----------
     iq_data : np.ndarray
-        Complex IQ data with shape (nz, nx, nt) or (nx, nz, nt)
+        Complex IQ data with shape (..., nt), where the last
+        dimension is time and all preceding dimensions are spatial
     framerate : float
         Acquisition frame rate in Hz
     cutoff_freq : float
@@ -56,13 +57,13 @@ def filter_highpass(iq_data: np.ndarray,
     GPU acceleration can provide 10-50x speedup for large datasets.
     """
 
-    # Get dimensions
-    if iq_data.ndim == 3:
-        nz, nx, nt = iq_data.shape
-        # Reshape for filtering along time dimension
-        iq_reshaped = iq_data.reshape((nz * nx, nt))
-    else:
-        raise ValueError(f"Expected 3D array, got shape {iq_data.shape}")
+    if iq_data.ndim < 2:
+        raise ValueError(f"Expected at least 2D array, got shape {iq_data.shape}")
+
+    # Treat last axis as time, flatten all spatial dimensions
+    *spatial_dims, nt = iq_data.shape
+    n_spatial = int(np.prod(spatial_dims))
+    iq_reshaped = iq_data.reshape((n_spatial, nt))
 
     # Check GPU availability
     if use_gpu and not CUPY_AVAILABLE:
@@ -87,7 +88,6 @@ def filter_highpass(iq_data: np.ndarray,
 
         if use_gpu:
             # GPU-accelerated filtering
-            print("Using GPU acceleration...")
 
             # Transfer data to GPU
             iq_gpu = cp.asarray(iq_reshaped)
@@ -134,7 +134,7 @@ def filter_highpass(iq_data: np.ndarray,
         raise ValueError(f"Unknown filter method: {method}")
 
     # Reshape back to original dimensions
-    return iq_filtered.reshape((nz, nx, nt))
+    return iq_filtered.reshape((*spatial_dims, nt))
 
 
 def design_highpass_filter(framerate: float,
@@ -180,7 +180,7 @@ def bandpass_filter(iq_data: np.ndarray,
     Parameters
     ----------
     iq_data : np.ndarray
-        Complex IQ data with shape (nz, nx, nt)
+        Complex IQ data with shape (..., nt)
     framerate : float
         Acquisition frame rate in Hz
     low_freq : float
@@ -195,9 +195,12 @@ def bandpass_filter(iq_data: np.ndarray,
     np.ndarray
         Bandpass filtered data
     """
+    if iq_data.ndim < 2:
+        raise ValueError(f"Expected at least 2D array, got shape {iq_data.shape}")
 
-    nz, nx, nt = iq_data.shape
-    iq_reshaped = iq_data.reshape((nz * nx, nt))
+    *spatial_dims, nt = iq_data.shape
+    n_spatial = int(np.prod(spatial_dims))
+    iq_reshaped = iq_data.reshape((n_spatial, nt))
 
     # Validate frequencies
     nyquist = framerate / 2
@@ -219,7 +222,7 @@ def bandpass_filter(iq_data: np.ndarray,
         else:
             iq_filtered[i, :] = signal.sosfiltfilt(sos, iq_reshaped[i, :])
 
-    return iq_filtered.reshape((nz, nx, nt))
+    return iq_filtered.reshape((*spatial_dims, nt))
 
 
 def wall_filter(iq_data: np.ndarray,

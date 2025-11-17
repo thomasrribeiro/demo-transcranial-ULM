@@ -21,7 +21,8 @@ from tqdm import tqdm
 
 # Import custom functions
 from functions import (load_acquisition_data, get_num_acquisitions, print_h5_structure,
-                      process_ulm_pipeline, create_velocity_map, create_density_map)
+                      process_ulm_pipeline, create_velocity_map, create_density_map,
+                      plot_ulm_results)
 
 plt.rcParams['figure.dpi'] = 100
 plt.rcParams['savefig.dpi'] = 150
@@ -40,7 +41,11 @@ os.makedirs(output_dir, exist_ok=True)
 # Processing parameters
 FILTER_METHOD = 'highpass'  # 'svd' or 'highpass'
 USE_GPU = True  # Set to True for GPU acceleration
-MIN_TRACK_LENGTH = 5
+
+# Quality filtering parameters (adjust to reduce noise)
+MIN_TRACK_LENGTH = 10  # Increase to 15, 20, or 30 to filter noise (longer tracks = cleaner vessels)
+GAUSSIAN_SIGMA = 0.0   # Set to 0 for no smoothing (raw bubble accumulation), 1-3 for smoothing
+GRID_OVERSAMPLE = 1    # Increase to 4 for higher resolution density maps
 
 # Acquisition range (None to process all)
 START_ACQ = 0
@@ -49,6 +54,9 @@ END_ACQ = None  # None means process all
 print(f"Output directory: {output_dir}")
 print(f"Filter method: {FILTER_METHOD}")
 print(f"GPU acceleration: {USE_GPU}")
+print(f"Min track length: {MIN_TRACK_LENGTH}")
+print(f"Gaussian sigma: {GAUSSIAN_SIGMA}")
+print(f"Grid oversample: {GRID_OVERSAMPLE}x")
 
 #%% Explore H5 file
 print_h5_structure(h5_file_path, max_depth=2)
@@ -85,7 +93,12 @@ for acq_idx in tqdm(acq_range, desc="Processing acquisitions"):
 
         iq_data = data['iq_data']
         framerate = data['framerate']
-        nz, nx, nt = iq_data.shape
+        if iq_data.ndim == 3:
+            nz, nx, nt = iq_data.shape
+        elif iq_data.ndim == 4:
+            ny, nz, nx, nt = iq_data.shape
+        else:
+            raise ValueError(f"iq_data must be 3D or 4D, got shape {iq_data.shape}")
 
         # Track max dimensions
         global_nz = max(global_nz, nz)
@@ -103,25 +116,27 @@ for acq_idx in tqdm(acq_range, desc="Processing acquisitions"):
 
         # Check if we got results
         if results['density_map'] is None:
+            if acq_idx < 5:  # Only print for first few to avoid spam
+                print(f"\nAcq {acq_idx}: No density map generated")
             continue
 
         # Store bubble array in memory for combined processing
+        # Note: bubble_array already filtered by MIN_TRACK_LENGTH in process_ulm_pipeline
         if len(results['bubble_array']) > 0:
-            mask = results['bubble_array'][:, 4] >= MIN_TRACK_LENGTH
-            filtered_bubbles = results['bubble_array'][mask]
+            all_results[f'acq{acq_idx}'] = {
+                'bubble_array': results['bubble_array'],
+                'n_bubbles': len(results['bubble_array']),
+                'n_frames': nt,
+                'framerate': framerate,
+                'nz': nz,
+                'nx': nx
+            }
 
-            if len(filtered_bubbles) > 0:
-                all_results[f'acq{acq_idx}'] = {
-                    'bubble_array': filtered_bubbles,
-                    'n_bubbles': len(results['bubble_array']),
-                    'n_frames': nt,
-                    'framerate': framerate,
-                    'nz': nz,
-                    'nx': nx
-                }
-
-                # Add to accumulated bubbles for progressive plotting
-                accumulated_bubbles.append(filtered_bubbles)
+            # Add to accumulated bubbles for progressive plotting
+            accumulated_bubbles.append(results['bubble_array'])
+        else:
+            if acq_idx < 5:  # Only print for first few to avoid spam
+                print(f"\nAcq {acq_idx}: No bubbles found after filtering")
 
         if results['metrics'] is not None:
             all_metrics[f'acq{acq_idx}'] = results['metrics']
@@ -130,32 +145,38 @@ for acq_idx in tqdm(acq_range, desc="Processing acquisitions"):
         if len(accumulated_bubbles) > 0 and (acq_idx + 1) % PLOT_EVERY_N == 0:
             combined_bubbles = np.vstack(accumulated_bubbles)
             boundaries = (0, global_nz, 0, global_nx)
-            grid_size = (global_nz * 2, global_nx * 2)
+            grid_size = (global_nz * GRID_OVERSAMPLE, global_nx * GRID_OVERSAMPLE)
 
             progressive_density_map = create_density_map(
                 combined_bubbles[:, 0],  # x positions
                 combined_bubbles[:, 1],  # z positions
                 boundaries,
                 grid_size,
-                gaussian_sigma=2.0
+                gaussian_sigma=GAUSSIAN_SIGMA
             )
 
-            # Create and save plot
+            # Create and save plot (normalized)
             fig, ax = plt.subplots(1, 1, figsize=(10, 8))
-            im = ax.imshow(progressive_density_map, cmap='hot', aspect='auto', origin='lower')
+
+            # Normalize to 0-1 range
+            normalized_progressive = progressive_density_map.copy()
+            if normalized_progressive.max() > 0:
+                normalized_progressive = normalized_progressive / normalized_progressive.max()
+
+            im = ax.imshow(normalized_progressive, cmap='hot', aspect='auto', origin='lower', vmin=0, vmax=1)
             ax.set_title(f'Accumulated Density Map (Acq 0-{acq_idx}, n={len(combined_bubbles)} tracks)')
             ax.set_xlabel('X (pixels)')
             ax.set_ylabel('Z (pixels)')
-            plt.colorbar(im, ax=ax, label='Density')
+            plt.colorbar(im, ax=ax, label='Normalized Density (0-1)')
 
             # Save figure
             fig.savefig(f'{progressive_dir}/density_acq_{acq_idx:04d}.png',
                        dpi=150, bbox_inches='tight')
-            # plt.close(fig)
-            plt.show()
+            plt.close(fig)
 
     except Exception as e:
-        # Silently skip failed acquisitions
+        # Print error for failed acquisitions
+        print(f"\nWarning: Acquisition {acq_idx} failed: {str(e)}")
         continue
 
 #%% Summary statistics
@@ -167,14 +188,15 @@ print("="*60)
 print(f"\nSuccessfully processed {len(all_results)} acquisitions")
 
 if all_results:
+    print(f"\nSuccessfully processed acquisitions:")
     for key, val in all_results.items():
-        print(f"\n{key}:")
-        print(f"  Bubbles: {val['n_bubbles']}")
-        print(f"  Frames: {val['n_frames']}")
-        print(f"  Frame rate: {val['framerate']:.1f} Hz")
+        print(f"  {key}: {val['n_bubbles']} bubbles, {val['n_frames']} frames @ {val['framerate']:.1f} Hz")
 
     total_bubbles = sum(v['n_bubbles'] for v in all_results.values())
+    total_frames = sum(v['n_frames'] for v in all_results.values())
     print(f"\nTotal bubbles across all acquisitions: {total_bubbles}")
+    print(f"Total frames across all acquisitions: {total_frames}")
+    print(f"Average bubbles per acquisition: {total_bubbles / len(all_results):.1f}")
 
     # Save summary
     summary = {
@@ -220,21 +242,23 @@ if all_results:
         # Concatenate all bubble positions
         combined_bubbles = np.vstack(all_bubbles)
 
-        print(f"\nCombined statistics:")
-        print(f"  Total bubbles (track length >= {MIN_TRACK_LENGTH}): {len(combined_bubbles)}")
+        print(f"\nCombined density map statistics:")
+        print(f"  Total tracks (track length >= {MIN_TRACK_LENGTH}): {len(combined_bubbles)}")
         print(f"  From {len(all_bubbles)} acquisitions")
+        print(f"  Total frames from all acquisitions: {sum(v['n_frames'] for v in all_results.values())}")
         print(f"  Global dimensions: {global_nz} x {global_nx}")
+        print(f"  Grid size: {global_nz * GRID_OVERSAMPLE} x {global_nx * GRID_OVERSAMPLE}")
 
         # Create combined density map
         boundaries = (0, global_nz, 0, global_nx)
-        grid_size = (global_nz * 2, global_nx * 2)
+        grid_size = (global_nz * GRID_OVERSAMPLE, global_nx * GRID_OVERSAMPLE)
 
         combined_density_map = create_density_map(
             combined_bubbles[:, 0],  # x positions
             combined_bubbles[:, 1],  # z positions
             boundaries,
             grid_size,
-            gaussian_sigma=2.0
+            gaussian_sigma=GAUSSIAN_SIGMA
         )
 
         # Create combined velocity map
@@ -251,6 +275,24 @@ if all_results:
 
         print(f"\n✓ Combined density map saved to {output_dir}/combined_density_map.npy")
         print(f"✓ Combined velocity map saved to {output_dir}/combined_velocity_map.npy")
+
+        # Display final combined density and velocity maps using plot_ulm_results
+        # Calculate total frames across all acquisitions
+        total_frames = sum(v['n_frames'] for v in all_results.values())
+        avg_framerate = np.mean([v['framerate'] for v in all_results.values()])
+
+        fig = plot_ulm_results(
+            density_map=combined_density_map.T,
+            velocity_map=combined_velocity_map.T,
+            nz=global_nz,
+            nx=global_nx,
+            n_bubbles=len(combined_bubbles),
+            nt=total_frames,
+            framerate=avg_framerate,
+            title=f"Combined ULM Results ({len(all_bubbles)} acquisitions)"
+        )
+        plt.show()
+
     else:
         print("\nNo bubbles found across acquisitions to create combined density map")
 

@@ -20,7 +20,7 @@ def calculate_tracking_metrics(bubble_array: np.ndarray,
     bubble_array : np.ndarray
         Array with columns [x, z, vx, vz, track_length, orig_x, orig_z, frame]
     iq_data : np.ndarray
-        Original IQ data (nz, nx, nt)
+        Original IQ data (..., nt) with time on last axis
     framerate : float
         Acquisition frame rate in Hz
     label : str, optional
@@ -55,7 +55,7 @@ def calculate_tracking_metrics(bubble_array: np.ndarray,
     frames = bubble_array[:, 7].astype(int)
     unique_frames, counts = np.unique(frames, return_counts=True)
 
-    num_frames = iq_data.shape[2] if iq_data is not None else len(unique_frames)
+    num_frames = iq_data.shape[-1] if iq_data is not None else len(unique_frames)
     duration = num_frames / framerate
 
     metrics['detection'] = {

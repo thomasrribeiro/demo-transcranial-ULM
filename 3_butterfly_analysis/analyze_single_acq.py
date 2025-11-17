@@ -58,9 +58,15 @@ data = load_acquisition_data(h5_file_path, acq_idx=ACQUISITION_IDX)
 
 iq_data = data['iq_data']
 framerate = data['framerate']
-nz, nx, nt = iq_data.shape
+if iq_data.ndim == 3:
+    nz, nx, nt = iq_data.shape
+    ny = 1
+elif iq_data.ndim == 4:
+    ny, nz, nx, nt = iq_data.shape
+else:
+    raise ValueError(f"iq_data must be 3D or 4D, got shape {iq_data.shape}")
 
-print(f"  Data shape: {nz} x {nx} x {nt}")
+print(f"  Data shape: {iq_data.shape} (ny={ny}, nz={nz}, nx={nx}, nt={nt})")
 print(f"  Frame rate: {framerate:.1f} Hz")
 print(f"  Speed of sound: {data['speed_of_sound']} m/s")
 

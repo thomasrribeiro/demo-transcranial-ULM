@@ -20,10 +20,9 @@ def filter_svd(iq_data: np.ndarray,
     Parameters
     ----------
     iq_data : np.ndarray
-        Complex IQ data with shape (nz, nx, nt) where:
-        - nz: number of depth pixels
-        - nx: number of lateral pixels
-        - nt: number of time frames
+        Complex IQ data with shape (..., nt) where:
+        - last axis is time (nt frames)
+        - all preceding axes are spatial dimensions
     n_components_remove : int, default=30
         Number of largest singular values/eigenvalues to remove (tissue components)
     method : str, default='eigendecomp'
@@ -40,14 +39,18 @@ def filter_svd(iq_data: np.ndarray,
     Removes coherent tissue signal while preserving transient bubble signals.
     """
 
-    nz, nx, nt = iq_data.shape
+    if iq_data.ndim < 2:
+        raise ValueError(f"Expected at least 2D array, got shape {iq_data.shape}")
+
+    *spatial_dims, nt = iq_data.shape
+    n_spatial = int(np.prod(spatial_dims))
 
     # Reshape to 2D matrix: spatial x temporal
-    iq_reshaped = iq_data.reshape((nz * nx, nt))
+    iq_reshaped = iq_data.reshape((n_spatial, nt))
 
     if method == 'eigendecomp':
         # Compute temporal covariance matrix (more efficient for nt < spatial dims)
-        C = np.conj(iq_reshaped.T) @ iq_reshaped / (nz * nx)
+        C = np.conj(iq_reshaped.T) @ iq_reshaped / n_spatial
 
         # Eigendecomposition
         eigenvalues, eigenvectors = linalg.eigh(C)
@@ -77,7 +80,7 @@ def filter_svd(iq_data: np.ndarray,
         iq_filtered = U @ np.diag(S) @ Vt
 
     # Reshape back to original dimensions
-    return iq_filtered.reshape((nz, nx, nt))
+    return iq_filtered.reshape((*spatial_dims, nt))
 
 
 def filter_svd_clutter(iq_data: np.ndarray,
@@ -90,7 +93,7 @@ def filter_svd_clutter(iq_data: np.ndarray,
     Parameters
     ----------
     iq_data : np.ndarray
-        Complex IQ data with shape (nz, nx, nt)
+        Complex IQ data with shape (..., nt)
     cutoff_low : int, default=1
         Number of largest singular values to remove (tissue)
     cutoff_high : int, optional
@@ -106,10 +109,14 @@ def filter_svd_clutter(iq_data: np.ndarray,
         - singular_values: Array of singular values for analysis
     """
 
-    nz, nx, nt = iq_data.shape
+    if iq_data.ndim < 2:
+        raise ValueError(f"Expected at least 2D array, got shape {iq_data.shape}")
+
+    *spatial_dims, nt = iq_data.shape
+    n_spatial = int(np.prod(spatial_dims))
 
     # Reshape to 2D matrix
-    iq_reshaped = iq_data.reshape((nz * nx, nt))
+    iq_reshaped = iq_data.reshape((n_spatial, nt))
 
     # SVD decomposition
     U, S, Vt = linalg.svd(iq_reshaped, full_matrices=False)
@@ -138,7 +145,7 @@ def filter_svd_clutter(iq_data: np.ndarray,
     iq_filtered = U @ np.diag(S_filtered) @ Vt
 
     # Reshape back
-    iq_filtered = iq_filtered.reshape((nz, nx, nt))
+    iq_filtered = iq_filtered.reshape((*spatial_dims, nt))
 
     return iq_filtered, singular_values
 
@@ -156,7 +163,7 @@ def adaptive_svd_filter(iq_data: np.ndarray,
     Parameters
     ----------
     iq_data : np.ndarray
-        Complex IQ data with shape (nz, nx, nt)
+        Complex IQ data with shape (..., nt)
     energy_threshold : float, default=0.95
         Fraction of total energy to attribute to tissue
     min_components : int, default=1
@@ -170,10 +177,14 @@ def adaptive_svd_filter(iq_data: np.ndarray,
         Filtered IQ data
     """
 
-    nz, nx, nt = iq_data.shape
+    if iq_data.ndim < 2:
+        raise ValueError(f"Expected at least 2D array, got shape {iq_data.shape}")
+
+    *spatial_dims, nt = iq_data.shape
+    n_spatial = int(np.prod(spatial_dims))
 
     # Reshape to 2D
-    iq_reshaped = iq_data.reshape((nz * nx, nt))
+    iq_reshaped = iq_data.reshape((n_spatial, nt))
 
     # SVD decomposition
     U, S, Vt = linalg.svd(iq_reshaped, full_matrices=False)
@@ -194,4 +205,4 @@ def adaptive_svd_filter(iq_data: np.ndarray,
     # Reconstruct
     iq_filtered = U @ np.diag(S) @ Vt
 
-    return iq_filtered.reshape((nz, nx, nt))
+    return iq_filtered.reshape((*spatial_dims, nt))

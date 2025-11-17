@@ -8,8 +8,9 @@ import json
 from typing import Dict, Tuple, Optional
 
 
-def load_acquisition_data(h5_file_path: str,
-                          acq_idx: int = 0) -> Dict:
+def load_acquisition_data(
+    h5_file_path: str, skip_iq_data: bool = False, acq_idx: int = 0
+) -> Dict:
     """
     Load all data for a single acquisition from H5 file.
 
@@ -17,6 +18,8 @@ def load_acquisition_data(h5_file_path: str,
     ----------
     h5_file_path : str
         Path to H5 file
+    skip_iq_data : bool, default=False
+        If True, skip loading IQ data
     acq_idx : int, default=0
         Acquisition index to load
 
@@ -26,7 +29,9 @@ def load_acquisition_data(h5_file_path: str,
         Dictionary containing:
         - compound_image: beamformed IQ data
         - doppler_signal: Doppler signal
-        - iq_data: reshaped IQ data (nz, nx, nt)
+        - iq_data: reshaped IQ data with time on last axis.
+          Shape is (nz, nx, nt) for legacy 2D data or
+          (ny, nz, nx, nt) for 3D/volumetric data.
         - framerate: frame rate in Hz
         - speed_of_sound: speed of sound in m/s
         - grid_x, grid_z: spatial grids
@@ -34,71 +39,99 @@ def load_acquisition_data(h5_file_path: str,
         - runtime_metadata: metadata dict
     """
 
-    with h5py.File(h5_file_path, 'r') as f:
-        acq_path = f'acquisitions/{acq_idx}/meta'
+    with h5py.File(h5_file_path, "r") as f:
+        acq_path = f"acquisitions/{acq_idx}/meta"
 
         # Load metadata
-        acquisition_config = json.loads(f[f'{acq_path}/acquisition_config'][()].decode('utf-8'))
-        runtime_metadata = json.loads(f[f'{acq_path}/runtime_metadata'][()].decode('utf-8'))
+        acquisition_config = json.loads(
+            f[f"{acq_path}/acquisition_config"][()].decode("utf-8")
+        )
+        runtime_metadata = json.loads(
+            f[f"{acq_path}/runtime_metadata"][()].decode("utf-8")
+        )
 
         # Extract parameters
-        framerate = runtime_metadata.get('empirical_pulse_repetition_rate_hz', 1590.0)
-        speed_of_sound = acquisition_config.get('speed_of_sound', 1540)
+        framerate = runtime_metadata.get("empirical_pulse_repetition_rate_hz", 1590.0)
+        speed_of_sound = acquisition_config.get("speed_of_sound", 1540)
 
-        # Load data - prioritize compound_image for consistency with old results
-        if f'{acq_path}/compound_image' in f:
-            # Old format: compound_image (nt, 1, nx, nz)
-            compound_image = f[f'{acq_path}/compound_image'][:]
-            doppler_signal = f[f'{acq_path}/doppler_signal'][:] if f'{acq_path}/doppler_signal' in f else None
-
-            # Reshape IQ data: (nt, 1, nx, nz) -> (nt, nx, nz) -> (nx, nz, nt)
-            iq_data = compound_image[:, 0, :, :].transpose(1, 2, 0)
-
-        elif f'{acq_path}/iq_frames' in f:
-            # New format: iq_frames
-            iq_frames = f[f'{acq_path}/iq_frames'][:]
-            # Shape: (nt, num_angles, 1, nz, nx)
-            compound_image = iq_frames
-            doppler_signal = None
-
-            # Reshape to (nx, nz, nt) to match compound_image behavior
-            # Average over angles dimension
-            iq_data = np.mean(iq_frames[:, :, 0, :, :], axis=1)  # (nt, nz, nx)
-            iq_data = iq_data.transpose(2, 1, 0)  # (nx, nz, nt)
-
+        if skip_iq_data:
+            iq_data = np.array([[[]]])
+            compound_image = np.array([[[]]])
+            doppler_signal = np.array([[[]]])
         else:
-            raise ValueError(f"No IQ data found in acquisition {acq_idx}")
+            # Load data - prioritize compound_image for consistency with old results
+            if f"{acq_path}/compound_image" in f:
+                # Old format: compound_image (nt, 1, nx, nz)
+                compound_image = f[f"{acq_path}/compound_image"][:]
+                doppler_signal = (
+                    f[f"{acq_path}/doppler_signal"][:]
+                    if f"{acq_path}/doppler_signal" in f
+                    else None
+                )
 
-        # Get dimensions from reshaped data
-        # Note: iq_data is (nx, nz, nt) for backward compatibility
-        nx, nz, nt = iq_data.shape
+                # Reshape IQ data:
+                # (nt, 1, nx, nz) -> (nt, nx, nz) -> (nz, nx, nt)
+                iq_3d = compound_image[:, 0, :, :]  # (nt, nx, nz)
+                iq_data = iq_3d.transpose(2, 1, 0)  # (nz, nx, nt)
+
+            elif f"{acq_path}/iq_frames" in f:
+                # New format: iq_frames
+                iq_frames = f[f"{acq_path}/iq_frames"][:]
+                # Expected shape: (nt, num_angles, ny, nz, nx) or (nt, num_angles, 1, nz, nx)
+                compound_image = iq_frames
+                doppler_signal = None
+
+                # Average over angles dimension: (nt, ny, nz, nx) or (nt, 1, nz, nx)
+                iq_mean = np.mean(iq_frames, axis=1)
+
+                if iq_mean.ndim == 4:
+                    # (nt, ny, nz, nx) -> (ny, nz, nx, nt)
+                    iq_data = iq_mean.transpose(1, 2, 3, 0)
+                elif iq_mean.ndim == 3:
+                    # (nt, nz, nx) -> (nz, nx, nt) for legacy 2D
+                    iq_data = iq_mean.transpose(1, 2, 0)
+                else:
+                    raise ValueError(
+                        f"Unexpected iq_frames shape {iq_frames.shape} after angle averaging"
+                    )
+
+            else:
+                raise ValueError(f"No IQ data found in acquisition {acq_idx}")
+
+        # Get dimensions from reshaped data (time is last axis)
+        if iq_data.ndim == 3:
+            nz, nx, nt = iq_data.shape
+        elif iq_data.ndim == 4:
+            ny, nz, nx, nt = iq_data.shape
+        else:
+            raise ValueError(f"iq_data must be 3D or 4D, got shape {iq_data.shape}")
 
         # Load grid
-        if f'{acq_path}/grid' in f:
-            grid_x = f[f'{acq_path}/grid/x'][:]
-            grid_z = f[f'{acq_path}/grid/z'][:]
+        if f"{acq_path}/grid" in f:
+            grid_x = f[f"{acq_path}/grid/x"][:]
+            grid_z = f[f"{acq_path}/grid/z"][:]
         else:
             grid_x = np.linspace(-50, 50, nx)
             grid_z = np.linspace(10, 120, nz)
 
     return {
-        'compound_image': compound_image,
-        'doppler_signal': doppler_signal,
-        'iq_data': iq_data,
-        'framerate': framerate,
-        'speed_of_sound': speed_of_sound,
-        'grid_x': grid_x,
-        'grid_z': grid_z,
-        'acquisition_config': acquisition_config,
-        'runtime_metadata': runtime_metadata,
-        'acq_idx': acq_idx
+        "compound_image": compound_image,
+        "doppler_signal": doppler_signal,
+        "iq_data": iq_data,
+        "framerate": framerate,
+        "speed_of_sound": speed_of_sound,
+        "grid_x": grid_x,
+        "grid_z": grid_z,
+        "acquisition_config": acquisition_config,
+        "runtime_metadata": runtime_metadata,
+        "acq_idx": acq_idx,
     }
 
 
 def get_num_acquisitions(h5_file_path: str) -> int:
     """Get number of acquisitions in H5 file."""
-    with h5py.File(h5_file_path, 'r') as f:
-        return len(f['acquisitions'])
+    with h5py.File(h5_file_path, "r") as f:
+        return len(f["acquisitions"])
 
 
 def print_h5_structure(h5_file_path: str, max_depth: int = 3):
@@ -114,7 +147,7 @@ def print_h5_structure(h5_file_path: str, max_depth: int = 3):
     """
 
     print(f"H5 File: {h5_file_path}")
-    print("="*60)
+    print("=" * 60)
 
     def print_item(name, obj, level=0):
         indent = "  " * level
@@ -124,10 +157,14 @@ def print_h5_structure(h5_file_path: str, max_depth: int = 3):
             print(f"{indent}{name}/: Group ({len(obj)} items)")
             if level < max_depth:
                 for key in list(obj.keys())[:5]:
-                    print_item(f"{name}/{key}", obj[key], level+1)
+                    print_item(f"{name}/{key}", obj[key], level + 1)
 
-    with h5py.File(h5_file_path, 'r') as f:
-        f.visititems(lambda name, obj: print_item(name, obj) if name.count('/') < max_depth else None)
+    with h5py.File(h5_file_path, "r") as f:
+        f.visititems(
+            lambda name, obj: (
+                print_item(name, obj) if name.count("/") < max_depth else None
+            )
+        )
 
-        n_acq = len(f['acquisitions'])
+        n_acq = len(f["acquisitions"])
         print(f"\nNumber of acquisitions: {n_acq}")

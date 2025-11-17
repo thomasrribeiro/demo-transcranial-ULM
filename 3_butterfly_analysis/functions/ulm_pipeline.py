@@ -28,7 +28,9 @@ def process_ulm_pipeline(iq_data: np.ndarray,
     Parameters
     ----------
     iq_data : np.ndarray
-        IQ data with shape (nz, nx, nt)
+        IQ data with shape (nz, nx, nt) or (ny, nz, nx, nt).
+        The last axis is time; any leading spatial dimensions
+        will be projected to a 2D (z, x) image for detection.
     framerate : float
         Frame rate in Hz
     filter_method : str, default='highpass'
@@ -60,11 +62,17 @@ def process_ulm_pipeline(iq_data: np.ndarray,
         - params: processing parameters used
     """
 
-    nz, nx, nt = iq_data.shape
+    if iq_data.ndim == 3:
+        nz, nx, nt = iq_data.shape
+        ny = 1
+    elif iq_data.ndim == 4:
+        ny, nz, nx, nt = iq_data.shape
+    else:
+        raise ValueError(f"iq_data must be 3D or 4D with time on the last axis, got {iq_data.shape}")
 
     if verbose:
         print(f"Processing ULM pipeline for {nt} frames at {framerate:.0f} Hz")
-        print(f"  Data shape: {nz} x {nx} x {nt}")
+        print(f"  Input data shape: {iq_data.shape} (ny={ny}, nz={nz}, nx={nx})")
 
     # Set default parameters
     if cutoff_freq is None:
@@ -91,13 +99,22 @@ def process_ulm_pipeline(iq_data: np.ndarray,
         print(f"\n1. Applying {filter_method} filtering...")
 
     if filter_method == 'svd':
-        iq_filtered = filter_svd(iq_data, n_components_remove=n_svd_components)
+        iq_filtered_nd = filter_svd(iq_data, n_components_remove=n_svd_components)
     elif filter_method == 'highpass':
-        iq_filtered = filter_highpass(iq_data, framerate=framerate,
-                                     cutoff_freq=cutoff_freq, order=4,
-                                     use_gpu=use_gpu)
+        iq_filtered_nd = filter_highpass(iq_data, framerate=framerate,
+                                        cutoff_freq=cutoff_freq, order=4,
+                                        use_gpu=use_gpu)
     else:
         raise ValueError(f"Unknown filter method: {filter_method}")
+
+    # For detection and tracking we work on a 2D (z, x) + time representation.
+    # If the input is 4D (ny, nz, nx, nt), collapse the y-dimension.
+    if iq_filtered_nd.ndim == 4:
+        iq_filtered = iq_filtered_nd.mean(axis=0)  # (nz, nx, nt)
+    else:
+        iq_filtered = iq_filtered_nd
+
+    nz, nx, nt = iq_filtered.shape
 
     # 2. Bubble detection
     if verbose:
@@ -173,7 +190,7 @@ def process_ulm_pipeline(iq_data: np.ndarray,
             'tracking_params': tracking_params,
             'min_track_length': min_track_length,
             'framerate': framerate,
-            'data_shape': (nz, nx, nt)
+            'data_shape': tuple(iq_data.shape)
         }
     }
 

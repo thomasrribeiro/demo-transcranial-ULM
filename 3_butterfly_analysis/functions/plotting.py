@@ -13,16 +13,25 @@ def plot_iq_frame(iq_data: np.ndarray,
                  title: str = "IQ Frame") -> Figure:
     """Plot magnitude and phase of IQ frame."""
 
+    # Support both 3D (nz, nx, nt) and 4D (ny, nz, nx, nt) data
+    if iq_data.ndim == 4:
+        # Collapse y-dimension for 2D visualization
+        iq_3d = iq_data.mean(axis=0)
+    elif iq_data.ndim == 3:
+        iq_3d = iq_data
+    else:
+        raise ValueError(f"iq_data must be 3D or 4D, got shape {iq_data.shape}")
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     # Magnitude
-    axes[0].imshow(np.abs(iq_data[:, :, frame_idx]), cmap='gray', aspect='auto')
+    axes[0].imshow(np.abs(iq_3d[:, :, frame_idx]), cmap='gray', aspect='auto')
     axes[0].set_title('Magnitude')
     axes[0].set_xlabel('Lateral [pixels]')
     axes[0].set_ylabel('Depth [pixels]')
 
     # Phase
-    axes[1].imshow(np.angle(iq_data[:, :, frame_idx]), cmap='hsv', aspect='auto')
+    axes[1].imshow(np.angle(iq_3d[:, :, frame_idx]), cmap='hsv', aspect='auto')
     axes[1].set_title('Phase')
     axes[1].set_xlabel('Lateral [pixels]')
     axes[1].set_ylabel('Depth [pixels]')
@@ -39,17 +48,32 @@ def plot_filtering_comparison(iq_original: np.ndarray,
                               filter_method: str = "Filter") -> Figure:
     """Compare original and filtered data."""
 
+    # Ensure we are working with 3D (nz, nx, nt) arrays for display
+    if iq_original.ndim == 4:
+        iq_orig_3d = iq_original.mean(axis=0)
+    elif iq_original.ndim == 3:
+        iq_orig_3d = iq_original
+    else:
+        raise ValueError(f"iq_original must be 3D or 4D, got shape {iq_original.shape}")
+
+    if iq_filtered.ndim == 4:
+        iq_filt_3d = iq_filtered.mean(axis=0)
+    elif iq_filtered.ndim == 3:
+        iq_filt_3d = iq_filtered
+    else:
+        raise ValueError(f"iq_filtered must be 3D or 4D, got shape {iq_filtered.shape}")
+
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
     # Original magnitude
-    axes[0, 0].imshow(np.abs(iq_original[:, :, frame_idx]), cmap='gray', aspect='auto')
+    axes[0, 0].imshow(np.abs(iq_orig_3d[:, :, frame_idx]), cmap='gray', aspect='auto')
     axes[0, 0].set_title('Original - Magnitude')
     axes[0, 0].set_xlabel('Lateral [pixels]')
     axes[0, 0].set_ylabel('Depth [pixels]')
 
     # Original Power Doppler
-    power_orig = 10*np.log10(np.abs(iq_original[:, :, frame_idx])**2 /
-                            np.max(np.abs(iq_original[:, :, frame_idx])**2) + 1e-10)
+    power_orig = 10*np.log10(np.abs(iq_orig_3d[:, :, frame_idx])**2 /
+                            np.max(np.abs(iq_orig_3d[:, :, frame_idx])**2) + 1e-10)
     im1 = axes[0, 1].imshow(power_orig, cmap='hot', aspect='auto', vmin=-40, vmax=0)
     axes[0, 1].set_title('Original - Power Doppler [dB]')
     axes[0, 1].set_xlabel('Lateral [pixels]')
@@ -57,14 +81,14 @@ def plot_filtering_comparison(iq_original: np.ndarray,
     plt.colorbar(im1, ax=axes[0, 1], fraction=0.046)
 
     # Filtered magnitude
-    axes[1, 0].imshow(np.abs(iq_filtered[:, :, frame_idx]), cmap='gray', aspect='auto')
+    axes[1, 0].imshow(np.abs(iq_filt_3d[:, :, frame_idx]), cmap='gray', aspect='auto')
     axes[1, 0].set_title('Filtered - Magnitude (Bubbles)')
     axes[1, 0].set_xlabel('Lateral [pixels]')
     axes[1, 0].set_ylabel('Depth [pixels]')
 
     # Filtered Power Doppler
-    power_filt = 10*np.log10(np.abs(iq_filtered[:, :, frame_idx])**2 /
-                            np.max(np.abs(iq_filtered[:, :, frame_idx])**2) + 1e-10)
+    power_filt = 10*np.log10(np.abs(iq_filt_3d[:, :, frame_idx])**2 /
+                            np.max(np.abs(iq_filt_3d[:, :, frame_idx])**2) + 1e-10)
     im2 = axes[1, 1].imshow(power_filt, cmap='hot', aspect='auto', vmin=-40, vmax=0)
     axes[1, 1].set_title('Filtered - Power Doppler [dB]')
     axes[1, 1].set_xlabel('Lateral [pixels]')
